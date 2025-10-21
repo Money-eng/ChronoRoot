@@ -32,11 +32,43 @@ def loadPath(search_path, ext = '*.*'):
     all_files = list(data_root.glob(ext))
     all_files = [str(path) for path in all_files]
     all_files.sort(key = natural_key)
-    
+    print('Number of files found:', len(all_files))
     return all_files
 
 
 def createResultFolder(conf):
+    """
+    Create a result directory tree for a run under conf['Project'].
+    This function attempts to:
+    - Ensure the project directory (conf['Project']) exists.
+    - Create a unique results subdirectory named "Results <i>" with the smallest
+        available i, starting at 0. If creation fails for 0..20, it raises.
+    - Inside the chosen results directory, create:
+        - "Graphs"
+        - "RSML"
+        - Optionally (when conf['SaveImages'] is True): "Imagenes" with
+            subfolders "img", "seg", "labeledSeg", and "graph".
+    Most directory-creation errors are silently ignored (e.g., when directories
+    already exist), except for the capped attempts to create "Results <i>".
+    Args:
+            conf (dict): Configuration mapping with required keys:
+                    - 'Project' (str): Path to the project directory where results will be created.
+                    - 'SaveImages' (bool): Whether to create the "Imagenes" folder and its subfolders.
+    Returns:
+            tuple[str, str, str, str]: Paths to:
+                    - saveFolder: The created "Results <i>" directory.
+                    - graphsPath: The "Graphs" subdirectory.
+                    - imagePath: The "Imagenes" subdirectory (if created).
+                    - rsmlPath: The "RSML" subdirectory.
+    Raises:
+            Exception: If a "Results <i>" directory cannot be created by the time i reaches 20.
+            KeyError: If required keys ('Project', 'SaveImages') are missing from conf.
+            UnboundLocalError: If conf['SaveImages'] is False (imagePath is not defined but still returned).
+    Notes:
+    - Although the search loop runs up to i == 99, failure is reported early at i == 20.
+    - Broad exception handling means that permission errors or other OS errors during
+        intermediate directory creation (other than the capped "Results <i>" attempts) are suppressed.
+    """
     try:
         os.mkdir(conf['Project'])
     except:
@@ -152,29 +184,77 @@ def selectSeed(images):
 
 
 def getROIandSeed(conf, images, segFiles):
-    N1 = len(images)
-    N2 = len(segFiles)
+    """
+    Interactively select a region of interest (ROI) and a seed from a time series of images.
+    This function displays the last available image (synchronized by the shorter of `images`
+    and `segFiles`) to let the user select an ROI. It then crops that ROI from a small set of
+    subsampled frames and asks the user to select a seed from those crops. The ROI bounds and
+    the selected seed are returned.
+    Parameters
+    ----------
+    conf : dict
+        Configuration dictionary. Must contain:
+        - 'timeStep' (int | float): Temporal resolution in minutes between consecutive frames.
+    images : Sequence[str]
+        Ordered file paths to the original images (chronological order expected).
+    segFiles : Sequence[str]
+        File paths to corresponding segmentation results. Only the length is used to compute
+        the number of synchronized frames.
+    Returns
+    -------
+    p : numpy.ndarray
+        Array of shape (4,) with integer pixel indices [row_start, row_end, col_start, col_end]
+        delimiting the selected ROI in the original image coordinate system.
+    seed : Any
+        The seed selection as returned by `selectSeed(crops)`. Typically represents a point
+        or set of points within the ROI; the exact structure depends on the implementation
+        of `selectSeed`.
+    Notes
+    -----
+    - The ROI is selected on the image at index min(len(images), len(segFiles)) - 1.
+    - The number of days is estimated as dia = (24 * 60) / conf['timeStep'].
+      The number of samples `c` is computed as max(1, floor(N / dia)), where N is the
+      synchronized frame count.
+    - Cropped frames presented for seed selection are taken at indices [0, 100, 200, ...]
+      up to `c - 1`. These indices must exist in `images`.
+    - This function requires user interaction via `selectROI` and `selectSeed`, and relies
+      on OpenCV (`cv2`) for image I/O.
+    Raises
+    ------
+    KeyError
+        If 'timeStep' is missing from `conf`.
+    IndexError
+        If `images` or `segFiles` are empty, or if the subsampled indices exceed the range
+        of `images`.
+    RuntimeError | ValueError
+        If image loading fails or interactive selection functions (`selectROI`/`selectSeed`)
+        cannot complete successfully.
+    """
+    N1 = len(images) # get number of images
+    N2 = len(segFiles) # get number of segmentations
 
-    N = min(N1,N2)
+    N = min(N1,N2) # use the shortest sequence length
     
-    original = cv2.imread(images[N-1])
+    original = cv2.imread(images[N-1]) # load the last available image
     
-    r = selectROI(original)
-    p = np.array([int(r[1]),int(r[1]+r[3]), int(r[0]),int(r[0]+r[2])])
+    r = selectROI(original) # let user select ROI
+    print('Selected ROI:', r)
+    p = np.array([int(r[1]),int(r[1]+r[3]), int(r[0]),int(r[0]+r[2])]) # define ROI bounds - y_min, y_max, x_min, x_max
     
     crops = []
     
     t = conf['timeStep'] #always in minutes
-    dia = 24*60/t
-    c = int(N//dia)
-    c = max(1, c)
+    dia = 24*60/t # number of frames per day
+    c = int(N//dia) # number of samples to take
+    c = max(1, c) # at least one sample
     
-    for i in range(0, c):
-        P2 = int(i*100)
-        img = cv2.imread(images[P2])
-        boundingBox = img[p[0]:p[1],p[2]:p[3]]
-        crops.append(boundingBox)
+    for i in range(0, c): # get c samples
+        P2 = int(i*100) # every 100 frames
+        img = cv2.imread(images[P2]) # load image
+        boundingBox = img[p[0]:p[1],p[2]:p[3]] # crop it
+        crops.append(boundingBox) # add to list
     
-    seed = selectSeed(crops)
+    print('Number of crops for seed selection:', len(crops))
+    seed = selectSeed(crops) # let user select seed from crops
     
     return p, seed

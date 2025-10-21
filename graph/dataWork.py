@@ -62,6 +62,7 @@ def dataWork(conf, pfile, folder, N_exp = None):
             #print('QR not found in', i)
             pixel_size = 0.04
             pass
+    pixel_size = 26
     
     #print('Pixel size (in mm): ', pixel_size)
     
@@ -115,9 +116,10 @@ def dataWork(conf, pfile, folder, N_exp = None):
     for i in range(0,N):
         name = data['FileName'][i]
         nums = re.findall(r'\d+', name)
-        hora = int(nums[3])
-        minutos = int(nums[4])
-        time[i] = hora + minutos / 100
+        #hora = int(nums[3])
+        #minutos = int(nums[4])
+        #time[i] = hora + minutos / 100
+        time[i] = i # if time info is not available, use index instead
         
     timehours = index * int(conf['timeStep']) / 60
     
@@ -166,7 +168,7 @@ def dataWork(conf, pfile, folder, N_exp = None):
         lateralRootsPooled2[i] = np.mean(lateralRootsPooled1[2*i:2*i+2])
         numlateralRootsPooled2[i] = np.mean(numlateralRootsPooled1[2*i:2*i+2])
 
-
+    print(mainRootPooled2)
     mainRootGrad = np.gradient(mainRootPooled2, edge_order = 2)
     lateralRootsGrad = np.gradient(lateralRootsPooled2, edge_order = 2)
     

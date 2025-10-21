@@ -52,9 +52,9 @@ def createTree(conf, i, images, grafo, ske, ske2):
 
 
 ## Load configuration values for the experiment
-
+count = 0
 def createHeader(conf, i, images):
-    rsml_file = "graph/default.rsml"
+    rsml_file = "/home/loai/Documents/code/RSMLExtraction/RSA_reconstruction/Method/ChronoRoot/graph/default.rsml"
     tree = ET.parse(rsml_file)
     root = tree.getroot()
     metadata = root[0]
@@ -75,12 +75,12 @@ def createHeader(conf, i, images):
         if elemento.tag == 'image':
             for sub in elemento:
                 if sub.tag == 'name':
-                    sub.text = images[i].replace(conf['Path'],'').replace('/','')
+                    sub.text = "image_test_" + str(i) + conf['FileExt']
+                    # images[i].replace(conf['Path'],'').replace('/','')
                 if sub.tag == 'captured':
-                    time = images[i].replace(conf['Path'],'').replace('/','').replace('.png','')
-                    year,month,day,hour,mins,secs = re.findall(r'\d+', time)[0:6]
-                    text = "%s-%s-%sT%s:%s:%s" %(year, month, day, hour, mins, secs)
-                    sub.text = text
+                    time = conf['captureTime'] # float between 0 and x 
+                    # year,month,day,hour,mins,secs = re.findall(r'\d+', time)[0:6] replace by today
+                    sub.text = str(time)
     
         if elemento.tag == 'time-sequence':
             for sub in elemento:

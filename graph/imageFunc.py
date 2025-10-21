@@ -21,6 +21,33 @@ import cv2
 from skimage.morphology import skeletonize
 import os
 
+
+def _as_uint8_img(arr):
+    """Coerce numpy array to a cv2.imwrite-friendly uint8 image (2D or 3D)."""
+    if arr is None:
+        return None
+    a = np.asarray(arr)
+    # If boolean, scale to 0/255
+    if a.dtype == np.bool_:
+        a = a.astype(np.uint8) * 255
+    # If float, scale/clamp to [0,255]
+    elif np.issubdtype(a.dtype, np.floating):
+        a = np.clip(a, 0, 255)
+        a = a.astype(np.uint8) if a.max() > 1.0 else (a * 255).astype(np.uint8)
+    # If not uint8, cast
+    elif a.dtype != np.uint8:
+        a = a.astype(np.uint8)
+    # Ensure 2D (H,W) or 3D (H,W,3)
+    if a.ndim == 2:
+        return a
+    if a.ndim == 3 and a.shape[2] in (1, 3, 4):
+        return a
+    # If single-channel with trailing 1, squeeze
+    if a.ndim == 3 and a.shape[2] == 1:
+        return a[:, :, 0]
+    # Fallback: try to reduce extra dims
+    return np.squeeze(a)
+
 def plot_seg(grafo1, original, ske2):
     g, _, _, clase, _, _ = grafo1
     
@@ -75,22 +102,30 @@ def plot_graph(grafo1, shape):
 def savePlotImages(name, folder, original, seg, grafo1, ske2):
     image = plot_seg(grafo1, original, ske2)
     grafo_img = plot_graph(grafo1, original.shape)
-    
+
+    # Normalize extension to .png to ensure a supported writer
+    stem, _ = os.path.splitext(name)
+    out_name = stem + ".png"
+
     f1 = os.path.join(folder, "img")
-    path = os.path.join(f1, name)
-    cv2.imwrite(path, original)
+    os.makedirs(f1, exist_ok=True)
+    path = os.path.join(f1, out_name)
+    cv2.imwrite(path, _as_uint8_img(original))
 
     f2 = os.path.join(folder, "seg")
-    path = os.path.join(f2, name)
-    cv2.imwrite(path, seg)
-    
+    os.makedirs(f2, exist_ok=True)
+    path = os.path.join(f2, out_name)
+    cv2.imwrite(path, _as_uint8_img(seg))
+
     f3 = os.path.join(folder, "labeledSeg")
-    path = os.path.join(f3, name)
-    cv2.imwrite(path, image)
-    
+    os.makedirs(f3, exist_ok=True)
+    path = os.path.join(f3, out_name)
+    cv2.imwrite(path, _as_uint8_img(image))
+
     f4 = os.path.join(folder, "graph")
-    path = os.path.join(f4, name)
-    cv2.imwrite(path, grafo_img)
+    os.makedirs(f4, exist_ok=True)
+    path = os.path.join(f4, out_name)
+    cv2.imwrite(path, _as_uint8_img(grafo_img))
 
     return
 
@@ -98,27 +133,40 @@ def savePlotImages(name, folder, original, seg, grafo1, ske2):
 def saveEmpty(name, folder, original, seg):
     image = np.ones(original.shape[:2], dtype='uint8') * 255
     grafo_img = np.ones(original.shape[:2], dtype='uint8') * 255
-    
+
+    # Normalize extension to .png to ensure a supported writer
+    stem, _ = os.path.splitext(name)
+    out_name = stem + ".png"
+
     f1 = os.path.join(folder, "img")
-    path = os.path.join(f1, name)
-    cv2.imwrite(path, original)
+    os.makedirs(f1, exist_ok=True)
+    path = os.path.join(f1, out_name)
+    cv2.imwrite(path, _as_uint8_img(original))
 
     f2 = os.path.join(folder, "seg")
-    path = os.path.join(f2, name)
-    cv2.imwrite(path, seg)
-    
+    os.makedirs(f2, exist_ok=True)
+    path = os.path.join(f2, out_name)
+    cv2.imwrite(path, _as_uint8_img(seg))
+
     f3 = os.path.join(folder, "labeledSeg")
-    path = os.path.join(f3, name)
-    cv2.imwrite(path, image)
-    
+    os.makedirs(f3, exist_ok=True)
+    path = os.path.join(f3, out_name)
+    cv2.imwrite(path, _as_uint8_img(image))
+
     f4 = os.path.join(folder, "graph")
-    path = os.path.join(f4, name)
-    cv2.imwrite(path, grafo_img)
-    
+    os.makedirs(f4, exist_ok=True)
+    path = os.path.join(f4, out_name)
+    cv2.imwrite(path, _as_uint8_img(grafo_img))
+
     return
 
 def getCleanSeg(segFile, bbox, seed, originalSeed):
-    seg = cv2.imread(segFile, 0)[bbox[0]:bbox[1],bbox[2]:bbox[3]]
+    # seg = segfile but everything else than the bounding box is zeroed
+    seg = segFile.copy()
+    seg[0:bbox[0],:] = 0
+    seg[bbox[1]:,:] = 0
+    seg[:,0:bbox[2]] = 0
+    seg[:,bbox[3]:] = 0
     
     seg[0:originalSeed[1],:] = 0
 
@@ -133,6 +181,7 @@ def getCleanSeg(segFile, bbox, seed, originalSeed):
 
     contour_sizes = [(cv2.contourArea(contour), contour) for contour in contours]
     j = 0
+    
 
     if len(contour_sizes) != 0:
         ### Sorts list of contours by size from bigger to smaller
@@ -159,12 +208,12 @@ def getCleanSeg(segFile, bbox, seed, originalSeed):
 def getCleanSke(seg):
     ske = np.array(skeletonize(seg // 255), dtype = 'uint8')
     
-    ske = prune(ske, 5)
-    ske = trim(ske)
-    ske = prune(ske, 3)
-    ske = trim(ske)
+    ske = prune(ske, 5) # Removes branches with length lower than 5 pixels
+    ske = trim(ske) # Removes unwanted pixels from the skeleton
+    ske = prune(ske, 3) # Removes branches with length lower than 3 pixels
+    ske = trim(ske) # Removes unwanted pixels from the skeleton
 
-    bnodes, enodes = skeleton_nodes(ske)
+    bnodes, enodes = skeleton_nodes(ske) # Branch and end nodes of the skeleton 
     
     flag = False
     if len(enodes) >= 2:
@@ -357,6 +406,25 @@ def endPoints(skel):
 
 
 def skeleton_nodes(ske):
+    """
+    Extract the coordinates of branch and end nodes from a 2D skeleton image.
+    Parameters
+    ----------
+    ske : numpy.ndarray
+        2D binary skeleton image where non-zero/True values denote skeleton pixels.
+    Returns
+    -------
+    bnodes : numpy.ndarray
+        Array of shape (N, 2) with integer [x, y] coordinates (column, row) of branch points (junctions).
+    enodes : numpy.ndarray
+        Array of shape (M, 2) with integer [x, y] coordinates (column, row) of end points (tips).
+    Notes
+    -----
+    - Coordinates are returned in (x, y) = (col, row) order (not (row, col)).
+    - Relies on branchedPoints(ske) and endPoints(ske), which must return 2D binary masks of the same shape as 'ske'
+      with ones at branch and end point locations, respectively.
+    - If no points are found, the corresponding output is an empty array with shape (0, 2).
+    """
     branch = branchedPoints(ske)
     end = endPoints(ske)
     
@@ -374,6 +442,39 @@ def skeleton_nodes(ske):
 
 
 def branchedPoints(skel):
+    """
+    Detect branching points in a binary skeleton using hit-or-miss morphology.
+    This function scans a skeletonized image with a set of 3x3 templates
+    representing typical branch configurations (cross/4-way, T-junctions, and
+    Y-junctions), including their rotations. For each template, a hit-or-miss
+    operation (cv2.MORPH_HITMISS) is computed and accumulated across all templates.
+    Parameters
+    ----------
+    skel : numpy.ndarray
+        2D single-channel binary skeleton image (dtype bool or uint8).
+        Foreground (skeleton) pixels should be 1 or 255; background should be 0.
+    Returns
+    -------
+    numpy.ndarray
+        2D integer array of the same shape as `skel`. Each pixel contains the sum
+        of matches from all templates at that location. Any non-zero value
+        indicates a detected branching point. Depending on OpenCV's binary
+        convention, non-zero values may be multiples of 255.
+    Notes
+    -----
+    - Templates use values {1, 0, 2} to denote foreground, background, and
+      don't-care, respectively (as required by cv2.MORPH_HITMISS).
+    - For a boolean mask of branch points, threshold with `bp > 0`.
+    - The input should be a thinned/skeletonized image; using a non-skeletonized
+      image may result in false positives.
+    - OpenCV may expect binary images with values {0, 1}. If your image uses
+      {0, 255}, sums in the output may be scaled accordingly.
+    Examples
+    --------
+    >>> bp = branchedPoints(skel)
+    >>> branch_mask = bp > 0
+    >>> ys, xs = np.where(branch_mask)
+    """
     X=[]
     #cross X
     X0 = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])

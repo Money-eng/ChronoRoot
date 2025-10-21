@@ -20,6 +20,40 @@ import numpy as np
 import graph_tool.all as gt
 
 def graphInit(graph):
+    """
+    Initialize node classifications and selected properties for a graph structure.
+    Given a tuple/list (g, pos, weight, clase, nodetype, age), the function:
+    - Computes the seed and tip vertices as those with the minimum and maximum y-coordinates from pos, respectively.
+    - Assigns nodetype for each vertex:
+        - "Ini" for the seed (minimum y),
+        - "FTip" for the tip (maximum y),
+        - "Bif" if the vertex has more than one outgoing neighbor,
+        - "LTip" if the vertex has exactly one outgoing neighbor.
+    - If the graph has exactly two vertices, sets clase[(s, t)][1] = 10 for the edge (seed, tip) and sets age for both vertices to 1.
+    Parameters
+    ----------
+    graph : Sequence
+            A 6-element sequence [g, pos, weight, clase, nodetype, age], where:
+            - g: Graph-like object exposing:
+                    - get_vertices() -> iterable of vertex indices
+                    - get_out_neighbours(i) -> iterable of neighbor indices for vertex i
+                    - edge(u, v) -> edge handle
+                    - vertex(i) -> vertex handle
+            - pos: Mapping or indexable sequence such that pos[i] -> (x, y, ...)
+                The second component (index 1) is treated as the y-coordinate.
+            - weight: Any. Passed through unchanged.
+            - clase: Mutable edge property map; clase[g.edge(u, v)] returns a mutable sequence. Its element at index 1 may be set to 10 when the graph has exactly two vertices.
+            - nodetype: Mutable vertex property map updated in-place with labels: "Ini", "FTip", "Bif", "LTip".
+            - age: Mutable vertex property map updated in-place; may be set to 1 for the two-vertex special case.
+    Returns
+    -------
+    list
+            The same 6-element structure [g, pos, weight, clase, nodetype, age], with nodetype (and possibly clase and age) updated in-place.
+    Notes
+    -----
+    - Vertex indices returned by g.get_vertices() are expected to index pos and to be valid for g.vertex(i).
+    - Requires NumPy for array operations.
+    """
     g, pos, weight, clase, nodetype, age = graph
     
     vertices = g.get_vertices()
