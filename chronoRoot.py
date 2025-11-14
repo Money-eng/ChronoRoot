@@ -48,24 +48,34 @@ if __name__ == "__main__":
 
 
     # List all folder in the input directory
-    input_dir = Path("/home/loai/Documents/code/RSMLExtraction/temp/input")
-    box_dir = list(input_dir.glob("*/*"))
+    input_dir = Path("/home/loai/Documents/code/RSMLExtraction/Results/Reconstruction_Unet_cldice_dice")
+    box_dir = list(input_dir.glob("*/*/*"))
     box_dir = [p for p in box_dir if p.is_dir()]
     box_dir.sort()
-    box_parent_dir = [p.parent for p in box_dir]
     
     # In each folder, image is 22_registered_stack.tif
     # Segmentation is 40_date_map.tif
     # RSML is 61_graph.rsml
     # Load them and pass to ChronoRootAnalyzer
     for box in box_dir:
-        conf['Project'] = "/home/loai/Documents/code/RSMLExtraction/temp/output/" + box.parent.name + "/" + box.name
-        os.makedirs(conf['Project'], exist_ok=True)
-        images_path = box / "22_registered_stack.tif"
+        # get 3 last characters of box name
+        truc = box.parent.parent.name[-3:]
+        box_name_suffix = int(box.parent.parent.name[-3:])
+        if box_name_suffix <246:
+            continue
+        
+        conf['Project'] = "/home/loai/Documents/code/RSMLExtraction/temp/output/" + box.parent.parent.name + '/' + box.parent.name + "/" + box.name
+
+        images_path = Path("/home/loai/Documents/code/RSMLExtraction/temp/input/" + box.parent.name + "/" + box.name + "/22_registered_stack.tif")
         seg_path = box / "40_date_map.tif"
-        rsml_path = box / "61_graph.rsml"
-        gt_rsml_path = rsml2mtg(rsml_path)
-        time_list = [float(t) for t in gt_rsml_path.graph_properties().get('metadata',{}).get("observation-hours", {}).split(",")]
+        rsml_path = box / "61_prediction_before_expertized_graph.rsml" # "61_graph.rsml"
+        try:
+            rsml_path_pred = rsml2mtg(rsml_path)
+        except Exception as e:
+            print(f"Error loading RSML file {rsml_path}: {e}")
+            continue
+        os.makedirs(conf['Project'], exist_ok=True)
+        time_list = [float(t) for t in rsml_path_pred.graph_properties().get('metadata',{}).get("observation-hours", {}).split(",")]
         if images_path.exists() and seg_path.exists() and rsml_path.exists():
             print(f"Processing folder: {box}")
             from tifffile import TiffFile
@@ -162,12 +172,12 @@ if __name__ == "__main__":
                 # save it again to make sure it is valid
                 mtg2rsml(mtg, conf['Project'] + f"/merged_time_{time_point}.rsml")
 
-        # delete everything that is not a file like 'merged_time_*.rsml'
-        for f in os.listdir(conf['Project']):
-            if os.path.isfile(os.path.join(conf['Project'], f)):
-                if not re.match(r'merged_time_\d+\.rsml', f):
-                    os.remove(os.path.join(conf['Project'], f))
-            else:
-                # remove directory and all its content
-                import shutil
-                shutil.rmtree(os.path.join(conf['Project'], f))       
+            # delete everything that is not a file like 'merged_time_*.rsml'
+            for f in os.listdir(conf['Project']):
+                if os.path.isfile(os.path.join(conf['Project'], f)):
+                    if not re.match(r'merged_time_\d+\.rsml', f):
+                        os.remove(os.path.join(conf['Project'], f))
+                else:
+                    # remove directory and all its content
+                    import shutil
+                    shutil.rmtree(os.path.join(conf['Project'], f))       
