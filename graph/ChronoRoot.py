@@ -154,8 +154,6 @@ def automatic_seed_from_segmentation(seg: np.ndarray, rsml_path: str, time_step:
     
     return map_label_to_seed, map_label_to_bounding_box
 
-
-
 def ChronoRootAnalyzer(conf: dict, images: list, segFiles: list, rsml_path: str):
     global plant_number
     plant_number = 0
@@ -493,4 +491,3 @@ def ChronoRootAnalyzerOLD(conf):
                 trackCount = 0
     
     dataWork(conf, pfile, saveFolder)
-  

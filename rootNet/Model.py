@@ -1,7 +1,7 @@
 import tensorflow as tf
 import logging
 
-from .modelUtils import pixel_wise_softmax, dice_coe_c1
+from .modelUtils import pixel_wise_softmax, dice_coe_c1, dice_hard_coe
 from .unetModels import ResUNet, UNet, ResUNetDS
 from .SegNet import SegNet
 from .DeepLab import DeepLab
@@ -96,9 +96,10 @@ class RootNet(object):
             
             self.loss_f = self.loss + config["l2"] * regularizer
             
-            #self.auc = tf.compat.v1.metrics.auc(self.y[:,:,:,1], self.logits[:,:,:,1], summation_method='careful_interpolation')
-            #self.precision = tf.compat.v1.metrics.precision_at_thresholds(self.y[:,:,:,1], self.logits[:,:,:,1],[0.5])
-            #self.recall = tf.compat.v1.metrics.recall_at_thresholds(self.y[:,:,:,1], self.logits[:,:,:,1],[0.5])
+            _, self.auc = tf.compat.v1.metrics.auc(self.y[:,:,:,1], self.logits[:,:,:,1], summation_method='careful_interpolation')
+            _, self.precision = tf.compat.v1.metrics.precision_at_thresholds(self.y[:,:,:,1], self.logits[:,:,:,1],[0.5])
+            _, self.recall = tf.compat.v1.metrics.recall_at_thresholds(self.y[:,:,:,1], self.logits[:,:,:,1],[0.5])
+            self.hard_dice = dice_hard_coe(self.logits, self.y)
 
             update_ops = tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.UPDATE_OPS)
 
@@ -106,7 +107,10 @@ class RootNet(object):
                 optim = tf.compat.v1.train.AdamOptimizer(name="optim", learning_rate=self.learning_rate)
                 self.train = optim.minimize(self.loss_f, var_list=self.unet.varList)
 
-        self.sess.run(tf.group(tf.compat.v1.global_variables_initializer(), tf.compat.v1.local_variables_initializer()))
+        self.sess.run(tf.group(
+            tf.compat.v1.global_variables_initializer(), 
+            tf.compat.v1.local_variables_initializer()
+        ))
 
         if len(self.summaryComponents) > 1:
             self.summary = tf.compat.v1.summary.merge(self.summaryComponents)
