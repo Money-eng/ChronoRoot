@@ -88,7 +88,7 @@ class ResUNetDS(object):
           for scope in self.finetuneLayers:
             self.varList.extend(tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.GLOBAL_VARIABLES, scope=scope))
 
-      self.saver = tf.compat.v1.train.Saver(tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.GLOBAL_VARIABLES, scope=self.name))
+      self.saver = tf.compat.v1.train.Saver(tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.GLOBAL_VARIABLES, scope=self.name), max_to_keep=None)
 
       self.reuse = True
 
@@ -176,7 +176,7 @@ class ResUNet(object):
           for scope in self.finetuneLayers:
             self.varList.extend(tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.GLOBAL_VARIABLES, scope=scope))
 
-      self.saver = tf.compat.v1.train.Saver(tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.GLOBAL_VARIABLES, scope=self.name))
+      self.saver = tf.compat.v1.train.Saver(tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.GLOBAL_VARIABLES, scope=self.name), max_to_keep=None)
 
       self.reuse = True
 
@@ -257,7 +257,7 @@ class UNet(object):
           for scope in self.finetuneLayers:
             self.varList.extend(tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.GLOBAL_VARIABLES, scope=scope))
 
-      self.saver = tf.compat.v1.train.Saver(tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.GLOBAL_VARIABLES, scope=self.name))
+      self.saver = tf.compat.v1.train.Saver(tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.GLOBAL_VARIABLES, scope=self.name), max_to_keep=None)
 
       self.reuse = True
 

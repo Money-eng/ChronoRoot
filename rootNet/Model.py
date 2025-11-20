@@ -32,6 +32,9 @@ class RootNet(object):
         logging.debug("Batch Shape:")
         logging.debug(imShape)
         gtShape = [config['batchSize']] + config['tileSize'] + [2]
+        
+        imShape = [None, None, None, 1] 
+        gtShape = [None, None, None, 2]
 
         # If phase = True, it is training phase. Otherwise is testing. It is used for batch_norm.
         self.phase = tf.compat.v1.placeholder(tf.bool, name='phase')
@@ -114,7 +117,6 @@ class RootNet(object):
 
         if len(self.summaryComponents) > 1:
             self.summary = tf.compat.v1.summary.merge(self.summaryComponents)
-
 
     def fit(self, batchX, batchY, learning_rate, summary=None, phase=1):
         if summary is None:

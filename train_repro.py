@@ -13,8 +13,8 @@ from rootNet.Provider import MPImageDataProvider
 CONF = {
     'tileSize': [256, 256],
     'batchSize': 8,
-    'numEpochs': 50,
-    'iterPerEpoch': 41, # number of images of train // batchSize
+    'numEpochs': 100,
+    'iterPerEpoch': 10, # 1000, 
     'learning_rate': 0.0001,
     'dropout': 0.30,
     'loss': 'cross_entropy',
@@ -23,10 +23,10 @@ CONF = {
     'ckptDirRoot': 'modelWeights',
     'multipleOf': [32, 32],
     'OriginalSize': [2464, 3280],
-    'Alpha': 0.8,  # Set to 0 if no postprocess wanted
+    'Alpha': 0.9,  # Set to 0 if no postprocess wanted
     'Thresh': 0.5,
+    'timeStep': 15,
     'PostProcess': True,
-    'timeStep': 15,  # In minutes
     'SmoothFactor': 8,
     'logDirRoot': 'logs'  # Nouveau dossier pour TensorBoard
 }
@@ -37,19 +37,16 @@ MODEL_L2 = {
 
 
 def load_folder(folder_path, img_suffix, mask_suffix, desc):
-    """Charge un dossier spécifique (Train ou Test)."""
     if not os.path.exists(folder_path):
         print(f"ATTENTION: Le dossier {folder_path} n'existe pas !")
         return [], []
 
-    # Désactive l'augmentation et le shuffle ici, c'est géré par le BatchGenerator plus tard
     provider = MPImageDataProvider(search_path=[
                                    folder_path], data_suffix=img_suffix, mask_suffix=mask_suffix, augment=False, shuffle_data=False)
 
     data = []
     gt = []
 
-    # Utilisation de tqdm pour voir l'avancement du chargement
     for img_path in tqdm.tqdm(provider.data_files, desc=desc):
         img = cv2.imread(img_path, 0)  # 2D (H, W)
 
@@ -74,15 +71,11 @@ def load_folder(folder_path, img_suffix, mask_suffix, desc):
 
 
 def load_dataset(input_dir, img_suffix=".png", mask_suffix="_mask.png"):
-    """Charge les données depuis les sous-dossiers Train et Test."""
     print(f"Chargement des données depuis {input_dir}...")
 
-    # On cherche explicitement les dossiers Train et Test (ou Validation)
-    # Adaptez les noms si vos dossiers s'appellent autrement (ex: 'val', 'validation')
     train_dir = os.path.join(input_dir, 'Train')
     test_dir = os.path.join(input_dir, 'Test')
 
-    # Si 'Test' n'existe pas, essayer 'Validation' ou 'val'
     if not os.path.exists(test_dir):
         if os.path.exists(os.path.join(input_dir, 'Validation')):
             test_dir = os.path.join(input_dir, 'Validation')
@@ -103,139 +96,46 @@ def make_summary(name, value):
     """Crée un objet Summary manuellement pour logger une valeur scalaire dans TF1."""
     return tf.compat.v1.Summary(value=[tf.compat.v1.Summary.Value(tag=name, simple_value=float(value))])
 
-def compute_numpy_metrics(pred_prob, gt_mask, threshold=0.5):
-    """
-    Calcule Dice, Precision, Recall sur des tableaux Numpy (H, W).
-    pred_prob: Probabilité (0.0 à 1.0)
-    gt_mask: Vérité terrain (0 ou 1)
-    """
-    # Binarisation
-    pred_mask = (pred_prob > threshold).astype(np.uint8)
-    gt_mask = (gt_mask > 0).astype(np.uint8)
-    
-    # Intersection et Unions
-    # On travaille sur des booléens pour la vitesse
-    intersection = np.logical_and(pred_mask, gt_mask).sum()
-    pred_sum = pred_mask.sum()
-    gt_sum = gt_mask.sum()
-    
-    # Dice = 2*Inter / (Pred + GT)
-    smooth = 1e-6 # Pour éviter division par zéro
-    dice = (2. * intersection + smooth) / (pred_sum + gt_sum + smooth)
-    
-    # Precision = TP / (TP + FP) = Inter / Pred
-    precision = (intersection + smooth) / (pred_sum + smooth)
-    
-    # Recall = TP / (TP + FN) = Inter / GT
-    recall = (intersection + smooth) / (gt_sum + smooth)
-    
-    return dice, precision, recall
-
 def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch):
     """
-    1. Reconstruit les images complètes par tuilage.
-    2. Calcule les métriques réelles sur l'image entière via Numpy.
-    3. Envoie la dernière image traitée à TensorBoard.
+    Évalue le modèle sur l'ensemble de validation complet (Full Resolution).
     """
-    total_dice, total_prec, total_rec = 0, 0, 0
+    losses = []
+    dices = []
     
-    # Limite pour ne pas y passer 1h si le val set est énorme (ex: 20 images max)
-    # Si votre val set est petit (<50 images), vous pouvez enlever cette limite [:20]
-    val_subset_img = data_val[:20] 
-    val_subset_gt = gt_val[:20]
-    n_images = len(val_subset_img)
-    
-    last_vis_img = None
-    last_vis_str = None
+    # On parcourt les images de validation une par une
+    # tqdm est optionnel ici mais pratique pour voir la progression
+    for img, gt in tqdm.tqdm(zip(data_val, gt_val), total=len(data_val), desc="Validation", leave=False):
+        
+        # 1. Préparation de l'entrée (Image)
+        # L'image chargée est en (H, W) uint8 (0-255).
+        # On doit : 
+        #   - Normaliser entre 0 et 1 (float32)
+        #   - Ajouter la dimension Batch (N) et Channel (C) -> (1, H, W, 1)
+        img_input = (img.astype(np.float32) / 255.0)[np.newaxis, :, :, np.newaxis]
+        
+        # 2. Préparation de la vérité terrain (GT)
+        # Le GT chargé est déjà en (H, W, 2).
+        # On ajoute juste la dimension Batch -> (1, H, W, 2)
+        gt_input = gt[np.newaxis, :, :, :]
 
-    # Paramètres de tuilage
-    tile_h, tile_w = conf['tileSize']
-    batch_size = conf['batchSize']
-    
-    for i in range(n_images):
-        full_img = val_subset_img[i] # (H, W)
-        full_gt = val_subset_gt[i]   # (H, W, 2)
+        # 3. Inférence (Forward Pass)
+        # On utilise la méthode .deploy() du RootNet qui est prévue pour l'évaluation.
+        # phase=0 (ou False) est CRUCIAL : cela désactive le Dropout et fige la BatchNorm.
+        loss, dice, auc, prec, rec = net.deploy(img_input, gt_input, phase=0)
         
-        h, w = full_img.shape
-        full_pred = np.zeros((h, w), dtype=np.float32)
-        
-        # Padding
-        pad_h = (tile_h - h % tile_h) % tile_h
-        pad_w = (tile_w - w % tile_w) % tile_w
-        img_padded = np.pad(full_img, ((0, pad_h), (0, pad_w)), mode='reflect')
-        
-        # --- Tuilage et Prédiction ---
-        for y in range(0, img_padded.shape[0], tile_h):
-            for x in range(0, img_padded.shape[1], tile_w):
-                tile = img_padded[y:y+tile_h, x:x+tile_w]
-                
-                # Dummy Batch pour tromper le réseau statique
-                dummy_batch = np.zeros((batch_size, tile_h, tile_w, 1), dtype=np.float32)
-                dummy_batch[0, :, :, 0] = tile
-                
-                batch_seg = net.segment(dummy_batch)
-                tile_prob = batch_seg[0, :, :, 1]
-                
-                # Reconstruction
-                h_end = min(y+tile_h, h)
-                w_end = min(x+tile_w, w)
-                valid_h = h_end - y
-                valid_w = w_end - x
-                full_pred[y:h_end, x:w_end] = tile_prob[:valid_h, :valid_w]
-        
-        # --- Calcul Métriques Numpy (Sur l'image complète) ---
-        # On compare le canal 1 du GT (Racine) avec la prédiction
-        dc, prec, rec = compute_numpy_metrics(full_pred, full_gt[:, :, 1])
-        
-        total_dice += dc
-        total_prec += prec
-        total_rec += rec
-        
-        # --- Préparation Image TensorBoard (Uniquement pour la dernière) ---
-        if i == n_images - 1:
-            vis_img = cv2.cvtColor(full_img, cv2.COLOR_GRAY2BGR)
-            
-            # Vert = GT
-            gt_mask = (full_gt[:, :, 1] > 0).astype(np.uint8)
-            contours_gt, _ = cv2.findContours(gt_mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-            cv2.drawContours(vis_img, contours_gt, -1, (0, 255, 0), 2)
-            
-            # Rouge = Pred
-            pred_mask = (full_pred > 0.5).astype(np.uint8)
-            contours_pred, _ = cv2.findContours(pred_mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-            cv2.drawContours(vis_img, contours_pred, -1, (0, 0, 255), 1)
-            
-            # Resize pour logs légers
-            scale = 25
-            dim = (int(vis_img.shape[1]*scale/100), int(vis_img.shape[0]*scale/100))
-            vis_resized = cv2.resize(vis_img, dim, interpolation=cv2.INTER_AREA)
-            _, buf = cv2.imencode('.png', vis_resized)
-            last_vis_str = buf.tobytes()
-            last_vis_shape = dim
+        losses.append(loss)
+        dices.append(dice)
 
-    # --- Envoi TensorBoard ---
-    if writer is not None and last_vis_str is not None:
-        summary = tf.compat.v1.Summary(value=[
-            tf.compat.v1.Summary.Value(tag="Validation_Full_Reconstruction", 
-                                       image=tf.compat.v1.Summary.Image(encoded_image_string=last_vis_str,
-                                                                        height=last_vis_shape[1], 
-                                                                        width=last_vis_shape[0]))
-        ])
-        writer.add_summary(summary, epoch)
+    # 4. Calcul des moyennes
+    avg_loss = np.mean(losses)
+    avg_dice = np.mean(dices)
 
-    # Moyennes
-    avg_dice = total_dice / n_images
-    avg_prec = total_prec / n_images
-    avg_rec = total_rec / n_images
-    
-    # Note: La "loss" est difficile à calculer exactement sur l'image entière sans TF
-    # On peut retourner 0 ou une approximation, le Dice est le plus important ici.
-    return {
-        'loss': 1.0 - avg_dice, 
-        'dice': avg_dice,
-        'precision': avg_prec,
-        'recall': avg_rec
-    }
+    # 5. Enregistrement dans TensorBoard
+    writer.add_summary(make_summary('val_loss', avg_loss), epoch)
+    writer.add_summary(make_summary('val_dice', avg_dice), epoch)
+
+    return {'loss': avg_loss, 'dice': avg_dice}
 
 def train_one_model(model_name, d_train, g_train, d_val, g_val, input_dir):
     print(f"=== Entraînement : {model_name} ===")
@@ -245,10 +145,12 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val, input_dir):
     current_conf['Model'] = model_name
     current_conf['l2'] = MODEL_L2.get(model_name, 1e-9)
     
-    ckpt_path = os.path.join(current_conf['ckptDirRoot'], model_name)
+    ckpt_base_path = os.path.join(current_conf['ckptDirRoot'], model_name)
+    
     log_path_train = os.path.join(current_conf['logDirRoot'], model_name, 'train')
     log_path_val = os.path.join(current_conf['logDirRoot'], model_name, 'val')
-    os.makedirs(ckpt_path, exist_ok=True)
+    
+    os.makedirs(ckpt_base_path, exist_ok=True)
 
     batch_gen = Patch2DBatchGeneratorFromTensors(
         current_conf, d_train, g_train, augment=True, infiniteLoop=True
@@ -269,16 +171,15 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val, input_dir):
         
         for epoch in epoch_pbar:
             epoch_loss = 0
-            batch_pbar = tqdm.tqdm(range(current_conf['iterPerEpoch']), desc=f"Ep {epoch+1}", leave=False, unit="batch")
+            batch_pbar = tqdm.tqdm(range(current_conf['iterPerEpoch']), desc=f"Epoch {epoch+1}", leave=False, unit="batch")
             
-            for i in batch_pbar:
+            for _ in batch_pbar:
                 try:
-                    batch_x, batch_y = batch_gen.queue.get(timeout=30)
+                    batch_x, batch_y = batch_gen.queue.get(timeout=60)
                     batch_gen.queue.task_done()
                 except queue.Empty:
-                    print("\n[ERREUR] Timeout générateur !")
-                    batch_gen.finish()
-                    return
+                    print("Erreur: Timeout lors de la récupération du batch.")
+                    break
 
                 loss = net.fit(batch_x, batch_y, learning_rate=current_conf['learning_rate'], phase=True)
                 epoch_loss += loss
@@ -292,19 +193,24 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val, input_dir):
             
             val_msg = ""
             if len(d_val) > 0:
-                # On passe le writer et l'époque à la fonction
+                print("  -> Validation en cours (Tentative Full-Res)...")
                 metrics = evaluate_validation(sess, net, d_val, g_val, current_conf, val_writer, epoch)
+                print(f"  -> Val Dice: {metrics['dice']:.4f}")
                 
-                val_writer.add_summary(make_summary('epoch_loss', metrics['loss']), epoch)
-                val_writer.add_summary(make_summary('dice_score', metrics['dice']), epoch)
-                val_writer.add_summary(make_summary('precision', metrics['precision']), epoch)
-                val_writer.add_summary(make_summary('recall', metrics['recall']), epoch)
-                
-                val_msg = f" | Val Dice: {metrics['dice']:.4f}"
+                # Sauvegarde Checkpoint
+                epoch_dir = os.path.join(ckpt_base_path, f"epoch_{epoch+1}")
+                os.makedirs(epoch_dir, exist_ok=True)
+                net.save(epoch_dir)
 
-            epoch_pbar.set_postfix({'Train Loss': f"{avg_train_loss:.4f}", 'Val': val_msg})
+            epoch_pbar.set_postfix({'Train Loss': f"{avg_train_loss:.4f}"})
+
+            epoch_save_dir = os.path.join(ckpt_base_path, f"epoch_{epoch + 1}")
             
-            net.save(ckpt_path)
+            os.makedirs(epoch_save_dir, exist_ok=True)
+            
+            print(f" -> Sauvegarde modèle dans : {epoch_save_dir}")
+            net.save(epoch_save_dir)
+
             train_writer.flush()
             val_writer.flush()
 
@@ -314,7 +220,7 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val, input_dir):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--input_dir', type=str,
-                        default="/home/loai/Documents/code/RSMLExtraction/RSA_reconstruction/Method/ChronoRoot/Data")
+                        default="./Data")
     parser.add_argument('--models', type=str, nargs='+',
                         default=['UNet', 'ResUNet', 'ResUNetDS', 'SegNet', 'DeepLab'])
     args = parser.parse_args()
