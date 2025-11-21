@@ -78,14 +78,19 @@ def upsample(incoming, size, name='upsample'):
 def maxunpool2d(incoming, mask, stride=2, name='unpool'):
     x = incoming
 
-    input_shape = incoming.get_shape().as_list()
-    strides = [1, stride, stride, 1]
-    output_shape = (input_shape[0],
-                    input_shape[1] * strides[1],
-                    input_shape[2] * strides[2],
-                    input_shape[3])
-
-    flat_output_shape = [output_shape[0], np.prod(output_shape[1:])]
+    input_shape = tf.shape(incoming) 
+    batch_size = input_shape[0]
+    height = input_shape[1]
+    width = input_shape[2]
+    channels = incoming.get_shape().as_list()[3] # Les channels sont souvent fixes (64, 128...), on peut garder get_shape ici ou mettre tf.shape aussi
+    
+    # Calcul de la forme de sortie dynamique
+    out_height = height * stride
+    out_width = width * stride
+    
+    output_shape = tf.stack([batch_size, out_height, out_width, channels])
+    flat_output_shape = tf.stack([batch_size, out_height * out_width * channels])
+    
     with tf.name_scope(name):
         flat_input_size = tf.size(x)
         batch_range = tf.reshape(tf.range(output_shape[0], dtype=mask.dtype),

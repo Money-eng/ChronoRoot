@@ -44,7 +44,12 @@ def upsample2d(tensor, factor):
     """
       Receives a 4D tensor (batch_num, w, h, channels) and upsamples it by repeating every element "factor" times in the "w" and "h" axes.
     """
-    return repeat(tensor, [1, factor, factor, 1])
+    shape = tf.shape(tensor)
+    height = shape[1]
+    width = shape[2]
+    new_height = height * factor
+    new_width = width * factor
+    return tf.image.resize_nearest_neighbor(tensor, [new_height, new_width])
 
 
 def dropout(tensor, rate, isTrain, name):

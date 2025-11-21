@@ -6,6 +6,8 @@ from .unetModels import ResUNet, UNet, ResUNetDS
 from .SegNet import SegNet
 from .DeepLab import DeepLab
 
+import numpy as np
+
 class RootNet(object):
     def __init__(self, sess, config, name, isTrain):
         """
@@ -33,7 +35,7 @@ class RootNet(object):
         logging.debug(imShape)
         gtShape = [config['batchSize']] + config['tileSize'] + [2]
         
-        imShape = [None, None, None, 1] 
+        imShape = [None, None, None, 1]
         gtShape = [None, None, None, 2]
 
         # If phase = True, it is training phase. Otherwise is testing. It is used for batch_norm.

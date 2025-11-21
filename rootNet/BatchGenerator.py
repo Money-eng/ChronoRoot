@@ -286,7 +286,7 @@ class Patch2DBatchGeneratorFromTensors(BatchGenerator):
             if coin < 0.25:
                 noise = self.random_state.randn(image.shape[1],image.shape[2]).astype('float32')*5
                 image[i,:,:,0] = cv2.add(image[i,:,:,0], noise)
-                image[i,:,:,0] = np.clip(image[i,:,:,0], 0, 255)
+                image[i,:,:,0] = np.clip(image[i,:,:,0], 0, 255) # make sure values are in range
          
         return image, label
     
