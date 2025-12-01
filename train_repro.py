@@ -109,10 +109,8 @@ def evaluate_validationOLD(sess, net, data_val, gt_val, conf, writer, epoch):
 
     for img, gt in tqdm.tqdm(zip(data_val, gt_val), total=len(data_val), desc="Validation", leave=False):
 
-
         img_input = (img.astype(np.float32) /
                      255.0)[np.newaxis, :, :, np.newaxis]
-
 
         gt_input = gt[np.newaxis, :, :, :]
 
@@ -129,6 +127,7 @@ def evaluate_validationOLD(sess, net, data_val, gt_val, conf, writer, epoch):
 
     return {'loss': avg_loss, 'dice': avg_dice}
 
+
 def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, use_crf=True):
     """
     Évalue le modèle avec des métriques avancées sur l'ensemble de validation.
@@ -140,15 +139,16 @@ def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, use_cr
         'betti_0_err': [], 'betti_1_err': [],
         'centerline_dist': []
     }
-    
+
     keep_pred = None
     keep_gt = None
 
     for img, gt in tqdm.tqdm(zip(data_val, gt_val), total=len(data_val), desc="Validation (Detailed)", leave=False):
-        
-        img_input = (img.astype(np.float32) / 255.0)[np.newaxis, :, :, np.newaxis]
+
+        img_input = (img.astype(np.float32) /
+                     255.0)[np.newaxis, :, :, np.newaxis]
         pred_prob = net.segment(img_input)
-        
+
         if use_crf:
             image_rgb = cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_GRAY2RGB)
             image_rgb = np.ascontiguousarray(image_rgb)
@@ -156,9 +156,9 @@ def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, use_cr
             unary = -np.log(np.clip(label_1, 1e-5, 1.0))
             _, H, W = unary.shape
             unary = unary.transpose(0, 2, 1)
-            unary = unary.reshape(2, -1) 
+            unary = unary.reshape(2, -1)
             unary = np.ascontiguousarray(unary)
-            
+
             d = dcrf.DenseCRF2D(W, H, 2)
             d.setUnaryEnergy(unary)
             d.addPairwiseBilateral(sxy=5, srgb=3, rgbim=image_rgb, compat=1)
@@ -167,45 +167,48 @@ def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, use_cr
             prob_map = crf_map[:, :, 1]
         else:
             prob_map = pred_prob[0, :, :, 1]
-                 
-        pred_mask_bin = (prob_map > conf.get('Thresh', 0.5)).astype(np.uint8).astype(bool)
-        
+
+        pred_mask_bin = (prob_map > conf.get('Thresh', 0.5)
+                         ).astype(np.uint8).astype(bool)
+
         current_loss = 0.0
-        
+
         if not use_crf:
-            min_size = 25 # arbitraire, taille en pixels pour éliminer les petits objets de moins de 25 pixels
-            pred_mask = remove_small_objects(pred_mask_bin, min_size=min_size).astype(np.uint8)
-            
+            min_size = 25  # arbitraire, taille en pixels pour éliminer les petits objets de moins de 25 pixels
+            pred_mask = remove_small_objects(
+                pred_mask_bin, min_size=min_size).astype(np.uint8)
+
         gt_mask = gt[:, :, 1].astype(np.uint8)
 
         # if last element in validation, keep
         if img is data_val[-1] and gt is gt_val[-1]:
             keep_pred = pred_mask
             keep_gt = gt_mask
-        
+
         results = compute_advanced_metrics(pred_mask, gt_mask)
-        
+
         # Stockage
         metrics_sum['loss'].append(current_loss)
         for k, v in results.items():
             if k in metrics_sum:
                 metrics_sum[k].append(v)
 
-    # Moyenne sur tout le dataset de validation
     avg_metrics = {k: np.mean(v) for k, v in metrics_sum.items()}
 
-    # Logging TensorBoard
     print(f"\n--- Epoch {epoch} Validation Results ---")
     for k, v in avg_metrics.items():
         writer.add_summary(make_summary(f'val_{k}', v), epoch)
         print(f"  {k}: {v:.4f}")
 
     if keep_pred is not None and keep_gt is not None:
-        cv2.imwrite(os.path.join(conf['logDirRoot'] + "/" + f"model_{net.model_name}", f'val_pred_epoch_{epoch}.png'), keep_pred * 255)
-        cv2.imwrite(os.path.join(conf['logDirRoot'] + "/" + f"model_{net.model_name}", f'val_gt_epoch_{epoch}.png'), keep_gt * 255)
+        cv2.imwrite(os.path.join(
+            conf['logDirRoot'] + "/" + f"model_{net.model_name}", f'val_pred_epoch_{epoch}.png'), keep_pred * 255)
+        cv2.imwrite(os.path.join(
+            conf['logDirRoot'] + "/" + f"model_{net.model_name}", f'val_gt_epoch_{epoch}.png'), keep_gt * 255)
     return avg_metrics
 
-def train_one_model(model_name, d_train, g_train, d_val, g_val, input_dir):
+
+def train_one_model(model_name, d_train, g_train, d_val, g_val):
     print(f"=== Entraînement : {model_name} ===")
     tf.compat.v1.reset_default_graph()
 
@@ -241,52 +244,64 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val, input_dir):
             range(current_conf['numEpochs']), desc="Epochs", unit="ep")
 
         for epoch in epoch_pbar:
-            epoch_loss = 0
-            batch_pbar = tqdm.tqdm(range(
-                current_conf['iterPerEpoch']), desc=f"Epoch {epoch+1}", leave=False, unit="batch")
+            # check if already checkpoint for this epoch
+            epoch_save_dir = os.path.join(ckpt_base_path, f"epoch_{epoch + 1}")
+            checkpoint_exists = False
+            if os.path.exists(epoch_save_dir):
+                if os.path.exists(os.path.join(epoch_save_dir, "checkpoint")):
+                    checkpoint_exists = True
 
-            for _ in batch_pbar:
-                try:
-                    batch_x, batch_y = batch_gen.queue.get(timeout=60)
-                    batch_gen.queue.task_done()
-                except queue.Empty:
-                    print("Erreur: Timeout lors de la récupération du batch.")
-                    break
-
-                loss = net.fit(
-                    batch_x, batch_y, learning_rate=current_conf['learning_rate'], phase=True)
+            if checkpoint_exists:
+                tqdm.tqdm.write(
+                    f" -> Checkpoint for epoch {epoch+1} already exists. Loading model...")
+                net.restore(epoch_save_dir)
+                
+                loss, _, _, _, _ = net.deploy(batch_x, batch_y, phase=False)
                 epoch_loss += loss
-
-                train_writer.add_summary(make_summary(
-                    'batch_loss', loss), global_step)
+                
+                train_writer.add_summary(make_summary('batch_loss', loss), global_step)
                 global_step += 1
                 batch_pbar.set_postfix({'loss': f"{loss:.4f}"})
 
-            avg_train_loss = epoch_loss / current_conf['iterPerEpoch']
-            train_writer.add_summary(make_summary(
-                'epoch_loss', avg_train_loss), epoch)
+            else:
+                epoch_loss = 0
+                batch_pbar = tqdm.tqdm(range(
+                    current_conf['iterPerEpoch']), desc=f"Epoch {epoch+1}", leave=False, unit="batch")
 
-            val_msg = ""
+                for _ in batch_pbar:
+                    try:
+                        batch_x, batch_y = batch_gen.queue.get(timeout=60)
+                        batch_gen.queue.task_done()
+                    except queue.Empty:
+                        print("Erreur: Timeout lors de la récupération du batch.")
+                        break
+
+                    loss = net.fit(
+                        batch_x, batch_y, learning_rate=current_conf['learning_rate'], phase=True)
+                    epoch_loss += loss
+
+                    train_writer.add_summary(make_summary(
+                        'batch_loss', loss), global_step)
+                    global_step += 1
+                    batch_pbar.set_postfix({'loss': f"{loss:.4f}"})
+
+            avg_train_loss = epoch_loss / current_conf['iterPerEpoch']
+            train_writer.add_summary(make_summary('epoch_loss', avg_train_loss), epoch)
+
             if len(d_val) > 0:
-                print("  -> Validation en cours (Tentative Full-Res)...")
                 metrics = evaluate_validation(
                     sess, net, d_val, g_val, current_conf, val_writer, epoch)
-                print(f"  -> Val Dice: {metrics['dice']:.4f}")
+                
+                print(f"Metriques de validation à la fin de l'époque {epoch+1} : {metrics}")
 
-                # Sauvegarde Checkpoint
                 epoch_dir = os.path.join(ckpt_base_path, f"epoch_{epoch+1}")
                 os.makedirs(epoch_dir, exist_ok=True)
                 net.save(epoch_dir)
 
             epoch_pbar.set_postfix({'Train Loss': f"{avg_train_loss:.4f}"})
 
-            epoch_save_dir = os.path.join(ckpt_base_path, f"epoch_{epoch + 1}")
-
-            os.makedirs(epoch_save_dir, exist_ok=True)
-
-            print(f" -> Sauvegarde modèle dans : {epoch_save_dir}")
-            net.save(epoch_save_dir)
-
+            print(f" -> Sauvegarde modèle dans : {epoch_dir}")
+            net.save(epoch_dir)
             train_writer.flush()
             val_writer.flush()
 
@@ -308,12 +323,12 @@ def main():
     if len(d_train) == 0:
         print("Erreur: Pas de données.")
         return
-    
+
     for model in args.models:
         print(f"\n\n=== Entraînement du modèle : {model} ===")
         try:
             train_one_model(model, d_train, g_train,
-                            d_val, g_val, args.input_dir)
+                            d_val, g_val)
         except Exception as e:
             print(f"Erreur sur {model}: {e}")
             import traceback
