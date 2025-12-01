@@ -93,14 +93,15 @@ def maxunpool2d(incoming, mask, stride=2, name='unpool'):
     
     with tf.name_scope(name):
         flat_input_size = tf.size(x)
-        batch_range = tf.reshape(tf.range(output_shape[0], dtype=mask.dtype),
-                                 shape=[input_shape[0], 1, 1, 1])
+        limit = tf.cast(output_shape[0], dtype=mask.dtype)
+        batch_range = tf.reshape(tf.range(limit, dtype=mask.dtype), [limit, 1, 1, 1])
         b = tf.ones_like(mask) * batch_range
         b = tf.reshape(b, [flat_input_size, 1])
         mask_ = tf.reshape(mask, [flat_input_size, 1])
         mask_ = tf.concat([b, mask_], 1)
 
         x_ = tf.reshape(x, [flat_input_size])
+        flat_output_shape = tf.cast(flat_output_shape, tf.int64)
         ret = tf.scatter_nd(mask_, x_, shape=flat_output_shape)
         ret = tf.reshape(ret, output_shape)
         return ret

@@ -250,32 +250,33 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
             if os.path.exists(epoch_save_dir):
                 if os.path.exists(os.path.join(epoch_save_dir, "checkpoint")):
                     checkpoint_exists = True
-
+            
             if checkpoint_exists:
-                tqdm.tqdm.write(
-                    f" -> Checkpoint for epoch {epoch+1} already exists. Loading model...")
-                net.restore(epoch_save_dir)
+                    tqdm.tqdm.write(
+                        f" -> Checkpoint for epoch {epoch+1} already exists. Loading model...")
+                    net.restore(epoch_save_dir)
+                    
+
+            epoch_loss = 0.0
+            batch_pbar = tqdm.tqdm(range(
+                current_conf['iterPerEpoch']), desc=f"Epoch {epoch+1}", leave=False)
+            for _ in batch_pbar:
+                try:
+                    batch_x, batch_y = batch_gen.queue.get(timeout=60)
+                    batch_gen.queue.task_done()
+                except queue.Empty:
+                    print("Erreur: Timeout lors de la récupération du batch.")
+                    break
                 
-                loss, _, _, _, _ = net.deploy(batch_x, batch_y, phase=False)
-                epoch_loss += loss
-                
-                train_writer.add_summary(make_summary('batch_loss', loss), global_step)
-                global_step += 1
-                batch_pbar.set_postfix({'loss': f"{loss:.4f}"})
+                if checkpoint_exists:                             
+                    loss, _, _, _, _ = net.deploy(batch_x, batch_y, phase=False)
+                    epoch_loss += loss
+                    
+                    train_writer.add_summary(make_summary('batch_loss', loss), global_step)
+                    global_step += 1
+                    batch_pbar.set_postfix({'loss': f"{loss:.4f}"})
 
-            else:
-                epoch_loss = 0
-                batch_pbar = tqdm.tqdm(range(
-                    current_conf['iterPerEpoch']), desc=f"Epoch {epoch+1}", leave=False, unit="batch")
-
-                for _ in batch_pbar:
-                    try:
-                        batch_x, batch_y = batch_gen.queue.get(timeout=60)
-                        batch_gen.queue.task_done()
-                    except queue.Empty:
-                        print("Erreur: Timeout lors de la récupération du batch.")
-                        break
-
+                else:
                     loss = net.fit(
                         batch_x, batch_y, learning_rate=current_conf['learning_rate'], phase=True)
                     epoch_loss += loss
