@@ -9,6 +9,8 @@ from rootNet.Model import RootNet
 from rootNet.BatchGenerator import Patch2DBatchGeneratorFromTensors
 from rootNet.Provider import MPImageDataProvider
 from metrics import compute_advanced_metrics
+from skimage.morphology import remove_small_objects
+import pydensecrf.densecrf as dcrf
 
 # --- Configuration ---
 CONF = {
@@ -127,7 +129,7 @@ def evaluate_validationOLD(sess, net, data_val, gt_val, conf, writer, epoch):
 
     return {'loss': avg_loss, 'dice': avg_dice}
 
-def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch):
+def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, use_crf=True):
     """
     Évalue le modèle avec des métriques avancées sur l'ensemble de validation.
     """
@@ -144,29 +146,43 @@ def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch):
 
     for img, gt in tqdm.tqdm(zip(data_val, gt_val), total=len(data_val), desc="Validation (Detailed)", leave=False):
         
-        # Préparation input
         img_input = (img.astype(np.float32) / 255.0)[np.newaxis, :, :, np.newaxis]
-        gt_input = gt[np.newaxis, :, :, :] # (1, H, W, 2)
-
-        # 1. Prédiction (Output réseau souvent softmax ou logits)
-        # Assumons que net.segment renvoie les probabilités (1, H, W, 2)
-        pred_prob = net.segment(img_input) 
+        pred_prob = net.segment(img_input)
         
-        # Calcul de la loss (approximatif si on n'a pas accès au graphe interne ici, sinon on ignore)
-        # Si net.deploy renvoie la loss, utilisez net.deploy. Ici on met 0 ou on calcule manuellement.
-        current_loss = 0.0 # Placeholder si non disponible via .segment()
-
-        # 2. Post-Processing : Binarisation
-        # On prend le canal 1 (Foreground)
-        foreground_prob = pred_prob[0, :, :, 1]
-        pred_mask = (foreground_prob > conf.get('Thresh', 0.5)).astype(np.uint8)
+        if use_crf:
+            image_rgb = cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_GRAY2RGB)
+            image_rgb = np.ascontiguousarray(image_rgb)
+            label_1 = np.transpose(pred_prob[0, :, :, :], (2, 0, 1))
+            unary = -np.log(np.clip(label_1, 1e-5, 1.0))
+            _, H, W = unary.shape
+            unary = unary.transpose(0, 2, 1)
+            unary = unary.reshape(2, -1) 
+            unary = np.ascontiguousarray(unary)
+            
+            d = dcrf.DenseCRF2D(W, H, 2)
+            d.setUnaryEnergy(unary)
+            d.addPairwiseBilateral(sxy=5, srgb=3, rgbim=image_rgb, compat=1)
+            Q = d.inference(1)
+            crf_map = np.array(Q).reshape(2, H, W).transpose(1, 2, 0)
+            prob_map = crf_map[:, :, 1]
+        else:
+            prob_map = pred_prob[0, :, :, 1]
+                 
+        pred_mask_bin = (prob_map > conf.get('Thresh', 0.5)).astype(np.uint8).astype(bool)
         
-        # GT Mask (Canal 1 est le foreground dans votre load_folder)
+        current_loss = 0.0
+        
+        if not use_crf:
+            min_size = 25 # arbitraire, taille en pixels pour éliminer les petits objets de moins de 25 pixels
+            pred_mask = remove_small_objects(pred_mask_bin, min_size=min_size).astype(np.uint8)
+            
         gt_mask = gt[:, :, 1].astype(np.uint8)
 
-        keep_pred = pred_mask
-        keep_gt = gt_mask
-        # 3. Calcul des métriques avancées
+        # if last element in validation, keep
+        if img is data_val[-1] and gt is gt_val[-1]:
+            keep_pred = pred_mask
+            keep_gt = gt_mask
+        
         results = compute_advanced_metrics(pred_mask, gt_mask)
         
         # Stockage
@@ -185,8 +201,8 @@ def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch):
         print(f"  {k}: {v:.4f}")
 
     if keep_pred is not None and keep_gt is not None:
-        cv2.imwrite(os.path.join(conf['logDirRoot'], f'val_pred_epoch_{epoch}.png'), keep_pred * 255)
-        cv2.imwrite(os.path.join(conf['logDirRoot'], f'val_gt_epoch_{epoch}.png'), keep_gt * 255)
+        cv2.imwrite(os.path.join(conf['logDirRoot'] + "/" + f"model_{net.model_name}", f'val_pred_epoch_{epoch}.png'), keep_pred * 255)
+        cv2.imwrite(os.path.join(conf['logDirRoot'] + "/" + f"model_{net.model_name}", f'val_gt_epoch_{epoch}.png'), keep_gt * 255)
     return avg_metrics
 
 def train_one_model(model_name, d_train, g_train, d_val, g_val, input_dir):
