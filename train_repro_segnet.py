@@ -102,66 +102,77 @@ def make_summary(name, value):
     return tf.compat.v1.Summary(value=[tf.compat.v1.Summary.Value(tag=name, simple_value=float(value))])
 
 
-def evaluate_validationOLD(sess, net, data_val, gt_val, conf, writer, epoch):
-    """
-    Évalue le modèle sur l'ensemble de validation complet (Full Resolution).
-    """
-    losses = []
-    dices = []
-
-    for img, gt in tqdm.tqdm(zip(data_val, gt_val), total=len(data_val), desc="Validation", leave=False):
-
-        img_input = (img.astype(np.float32) /
-                     255.0)[np.newaxis, :, :, np.newaxis]
-
-        gt_input = gt[np.newaxis, :, :, :]
-
-        loss, dice, auc, prec, rec = net.deploy(img_input, gt_input, phase=0)
-
-        losses.append(loss)
-        dices.append(dice)
-
-    avg_loss = np.mean(losses)
-    avg_dice = np.mean(dices)
-
-    writer.add_summary(make_summary('val_loss', avg_loss), epoch)
-    writer.add_summary(make_summary('val_dice', avg_dice), epoch)
-
-    return {'loss': avg_loss, 'dice': avg_dice}
-
-
 def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, model_name, do_heavy, use_crf=True):
     """
-    Version parallélisée de l'évaluation.
+    Version parallélisée de l'évaluation avec fix pour SegNet sur les dimensions.
     """
     metrics_sum = {
         'loss': [], 'f1': [], 'precision': [], 'recall': [], 'iou': [], 'dice': [], 
-        'dice_gpu': [], 'auc_gpu': [], 'precision_gpu': [], 'recall_gpu': [], 'betti_0_err': [], 'betti_1_err': [], 'betti_0_abs_err': [], 'betti_1_abs_err': [], 'centerline_distance': [], 'hausdorff_95': [], 'hausdorff_max': [], 'surface_dice_1mm': []
+        'dice_gpu': [], 'auc_gpu': [], 'precision_gpu': [], 'recall_gpu': [], 
+        'betti_0_err': [], 'betti_1_err': [], 'betti_0_abs_err': [], 'betti_1_abs_err': [], 
+        'centerline_distance': [], 'hausdorff_95': [], 'hausdorff_max': [], 'surface_dice_1mm': []
     }
     
-    # On ajoute les clés lourdes seulement si nécessaire pour ne pas polluer les logs avec des 0
     if do_heavy:
         heavy_keys = ['apls']
         for k in heavy_keys:
             metrics_sum[k] = []
     
-    # using deploy to compute loss only
-    loss, diceg, aucg, precg, recg = net.deploy(data_val[0][np.newaxis, :, :, np.newaxis],
-                         gt_val[0][np.newaxis, :, :, :])
+    # --- FIX SEGNET : PADDING POUR NET.DEPLOY ---
+    # SegNet a besoin que les dimensions soient des multiples de 32 (2^5)
+    MULTIPLE_OF = 32
+    
+    # On prend la première image
+    val_img = data_val[0]
+    val_gt = gt_val[0]
+    
+    h, w = val_img.shape
+    pad_h = (MULTIPLE_OF - (h % MULTIPLE_OF)) % MULTIPLE_OF
+    pad_w = (MULTIPLE_OF - (w % MULTIPLE_OF)) % MULTIPLE_OF
+    
+    # On pad l'image et le masque
+    val_img_padded = np.pad(val_img, ((0, pad_h), (0, pad_w)), mode='constant', constant_values=0)
+    # Le GT a une dimension channel (H, W, 2)
+    val_gt_padded = np.pad(val_gt, ((0, pad_h), (0, pad_w), (0, 0)), mode='constant', constant_values=0)
+    
+    # Exécution sur l'image paddée
+    loss, diceg, aucg, precg, recg = net.deploy(
+        val_img_padded[np.newaxis, :, :, np.newaxis],
+        val_gt_padded[np.newaxis, :, :, :]
+    )
+    # --------------------------------------------
+
     metrics_sum['loss'].append(loss)
     metrics_sum['dice_gpu'].append(diceg)
     metrics_sum['auc_gpu'].append(aucg)
     metrics_sum['precision_gpu'].append(precg)
     metrics_sum['recall_gpu'].append(recg)
     
-
     tasks = []
 
-    for img, gt in zip(data_val, gt_val):
-        img_input = (img.astype(np.float32) /
-                     255.0)[np.newaxis, :, :, np.newaxis]
+    # Pour la boucle principale, le worker `process_single_validation_item` 
+    # doit aussi gérer le padding si SegNet est utilisé pour la prédiction.
+    # Ici, nous passons l'image brute, donc il faut s'assurer que net.segment() gère le padding
+    # OU le faire ici. Le plus simple est de le faire ici pour tout le monde.
 
-        pred_prob = net.segment(img_input)
+    for img, gt in zip(data_val, gt_val):
+        
+        # 1. Calcul du padding
+        h, w = img.shape
+        pad_h = (MULTIPLE_OF - (h % MULTIPLE_OF)) % MULTIPLE_OF
+        pad_w = (MULTIPLE_OF - (w % MULTIPLE_OF)) % MULTIPLE_OF
+        
+        img_padded = np.pad(img, ((0, pad_h), (0, pad_w)), mode='constant', constant_values=0)
+        
+        # 2. Prédiction sur l'image paddée
+        img_input = (img_padded.astype(np.float32) / 255.0)[np.newaxis, :, :, np.newaxis]
+        pred_prob_padded = net.segment(img_input)
+        
+        # 3. Crop pour revenir à la taille originale (IMPORTANT pour les métriques)
+        # pred_prob est (1, H_pad, W_pad, 2)
+        pred_prob = pred_prob_padded[:, :h, :w, :]
+        
+        # On passe une copie des numpy arrays pour éviter les problèmes de concurrence
         tasks.append((pred_prob.copy(), img.copy(), gt.copy(), conf, use_crf, do_heavy))
 
     keep_pred = None
@@ -199,7 +210,6 @@ def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, model_
             save_dir, f'val_gt_epoch_{epoch}.png'), keep_gt * 255)
 
     return avg_metrics
-
 
 def process_single_validation_item(args):
     """
@@ -359,7 +369,7 @@ def main():
     parser.add_argument('--input_dir', type=str,
                         default="./Data")
     parser.add_argument('--models', type=str, nargs='+',
-                        default=['UNet', 'ResUNet', 'ResUNetDS', 'SegNet', 'DeepLab'])
+                        default=['SegNet'])
     args = parser.parse_args()
 
     print(f"Démarrage de l'entraînement pour les modèles : {args.models}")

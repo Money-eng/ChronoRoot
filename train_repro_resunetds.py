@@ -359,7 +359,7 @@ def main():
     parser.add_argument('--input_dir', type=str,
                         default="./Data")
     parser.add_argument('--models', type=str, nargs='+',
-                        default=['UNet', 'ResUNet', 'ResUNetDS', 'SegNet', 'DeepLab'])
+                        default=['ResUNetDS'])
     args = parser.parse_args()
 
     print(f"Démarrage de l'entraînement pour les modèles : {args.models}")
