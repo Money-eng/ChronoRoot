@@ -148,7 +148,10 @@ def compute_ensemble_for_subfolder(conf, input_subdir_path, output_epoch_root, a
         ensemble_pred = np.mean(segs, axis=0)
 
       
-        accum = (conf['Alpha'] * accum + ensemble_pred) / (conf['Alpha'] + 1)
+        if i > 0:
+            accum = (conf['Alpha'] * accum + ensemble_pred) / (conf['Alpha'] + 1)
+        else:
+            accum = ensemble_pred.copy()
         _, outimg = cv2.threshold(accum, conf['Thresh'], 1.0, cv2.THRESH_BINARY)
         
         # Sauvegarde accumulée
@@ -157,7 +160,10 @@ def compute_ensemble_for_subfolder(conf, input_subdir_path, output_epoch_root, a
         os.makedirs(final_output_dir_img, exist_ok=True)
         SaveSegImage(conf, fake_name, outimg, final_output_dir_img, ".png", True)
 
-        accum = conf['Alpha'] * accum + ensemble_pred * (1 - conf['Alpha'])
+        if i > 0:
+            accum = conf['Alpha'] * accum + ensemble_pred * (1 - conf['Alpha'])
+        else:
+            accum = ensemble_pred.copy()
         _, outimg = cv2.threshold(accum, conf['Thresh'], 1.0, cv2.THRESH_BINARY)
         
         # Sauvegarde exponentielle accumulée
@@ -166,10 +172,11 @@ def compute_ensemble_for_subfolder(conf, input_subdir_path, output_epoch_root, a
         os.makedirs(final_output_dir_img, exist_ok=True)
         SaveSegImage(conf, fake_name, outimg, final_output_dir_img, ".png", True)
 
+        _, pred = cv2.threshold(ensemble_pred, conf['Thresh'], 1.0, cv2.THRESH_BINARY)
         #sauvegrade sans accumulation pour référence
         final_output_dir_noacc = os.path.join(final_output_dir, "noacc")
         os.makedirs(final_output_dir_noacc, exist_ok=True)
-        SaveSegImage(conf, fake_name, ensemble_pred, final_output_dir_noacc, ".png", True)
+        SaveSegImage(conf, fake_name, pred, final_output_dir_noacc, ".png", True)
         all_images[:, :, i] = ensemble_pred
         
     rupt = detect_rupture_accumulative(all_images, conf)
@@ -178,7 +185,8 @@ def compute_ensemble_for_subfolder(conf, input_subdir_path, output_epoch_root, a
         fake_name = [[os.path.basename(images_orig[t])]]
         final_output_dir_img = os.path.join(final_output_dir, "rupt")
         os.makedirs(final_output_dir_img, exist_ok=True)
-        SaveSegImage(conf, fake_name, rupt[:, :, t], final_output_dir_img, ".png", True)
+        _, rupo = cv2.threshold(rupt[:, :, t], conf['Thresh'], 1.0, cv2.THRESH_BINARY)
+        SaveSegImage(conf, fake_name, rupo, final_output_dir_img, ".png", True)
 
 def detect_rupture_accumulative(all_images, conf):
     H, W, T = all_images.shape
@@ -214,18 +222,15 @@ def detect_rupture_accumulative(all_images, conf):
     
     final_valid_mask = is_strong_rupture & is_temporally_consistent
     
-    birth_dates = np.zeros(H * W, dtype=np.int32)
-    birth_dates[final_valid_mask] = slope_times[final_valid_mask]
+    new_time_serie = np.zeros((H * W, T), dtype=np.float32)
+    for idx in range(H * W):
+        if final_valid_mask[idx]:
+            rupture_time = max_delta_time[idx]
+            new_time_serie[idx, rupture_time:] = X[rupture_time:, idx]
+        else:
+            new_time_serie[idx, :] = X[:, idx]
     
-    starts_existing = X[0] > conf['Thresh']
-    birth_dates[starts_existing] = 1 
-
-    time_grid = np.arange(T).reshape(T, 1) # create time grid
-    birth_dates_broad = birth_dates.reshape(1, H * W) # reshape birth dates
-    sequence_mask = (time_grid >= birth_dates_broad) & (birth_dates_broad > 0) # if time >= birth date and birth date > 0
-    sequence_mask = sequence_mask.T.reshape(H, W, T) # reshape to original dimensions
-    
-    return all_images * sequence_mask.astype(float) 
+    return new_time_serie.reshape(H, W, T)
 
 def run_ensemble_pipeline(conf, models_root, data_root, output_root, use_crf):
     all_potential_models = ['UNet', 'ResUNet', 'ResUNetDS', 'SegNet', 'DeepLab']
