@@ -62,14 +62,13 @@ def Segment(net, conf, input_dir, output_dir, use_crf):
     Provider = DataProvider(input_dir, data_suffix=".png")
     if len(Provider.data_files) == 0: return
 
-    data, name = Provider(1)
+    data, name = Provider(1) # 1 is for batch size
     
     # Note : La session est gérée à l'extérieur maintenant
     conf["batchSize"] = 1
     conf["tileSize"] = list(data.shape[1:3])
 
     limit = conf['LIMIT']
-
     if limit != -1:
         n = limit
     else:
@@ -123,6 +122,7 @@ def compute_ensemble_for_subfolder(conf, input_subdir_path, output_epoch_root, a
     # Accumulateur pour l'ensemble temporel (ChronoRoot logic)
     first_img_shape = cv2.imread(images_orig[0], 0).shape
     accum = np.zeros(first_img_shape, dtype=float)
+    all_images = np.zeros((first_img_shape[0], first_img_shape[1], n), dtype=float)
 
     print(f"    Computing Ensemble + Time for {sub_folder_name}...")
 
@@ -136,40 +136,99 @@ def compute_ensemble_for_subfolder(conf, input_subdir_path, output_epoch_root, a
             if os.path.exists(mask_path):
                 img = cv2.imread(mask_path, 0)
                 if img is None:
-                    # print(f"Warning: Failed to load {mask_path}")
+                    print(f"Warning: Failed to load {mask_path}")
                     segs.append(np.zeros(first_img_shape))
                 else:
                     # Normalisation 0-255 -> 0.0-1.0 pour le calcul
                     segs.append(img.astype('float') / 255.0)
             else:
+                print(f"Warning: Missing mask {mask_path}")
                 segs.append(np.zeros(first_img_shape))
         
-        # 1. Moyenne des modèles (Ensemble pur)
-        if len(segs) > 0:
-            ensemble_pred = np.mean(segs, axis=0)
-        else:
-            ensemble_pred = np.zeros(first_img_shape)
+        ensemble_pred = np.mean(segs, axis=0)
 
-        # 2. Accumulation Temporelle (Ensemble + Time)
-        # C'est ici qu'on applique la logique ChronoRoot puisque la fonction Segment ne le fait plus
-        accum = conf['Alpha'] * accum + ensemble_pred
-        
-        # Clip pour sécurité avant threshold
-        accum = np.clip(accum, 0.0, 1.0)
-        
-        # 3. Threshold Final
+      
+        accum = (conf['Alpha'] * accum + ensemble_pred) / (conf['Alpha'] + 1)
         _, outimg = cv2.threshold(accum, conf['Thresh'], 1.0, cv2.THRESH_BINARY)
         
-        # Sauvegarde
-        fake_name = [[filename]] 
-        SaveSegImage(conf, fake_name, outimg, final_output_dir, ".png", True)
+        # Sauvegarde accumulée
+        fake_name = [[filename]]
+        final_output_dir_img = os.path.join(final_output_dir, "acc")
+        os.makedirs(final_output_dir_img, exist_ok=True)
+        SaveSegImage(conf, fake_name, outimg, final_output_dir_img, ".png", True)
 
+        accum = conf['Alpha'] * accum + ensemble_pred * (1 - conf['Alpha'])
+        _, outimg = cv2.threshold(accum, conf['Thresh'], 1.0, cv2.THRESH_BINARY)
+        
+        # Sauvegarde exponentielle accumulée
+        fake_name = [[filename]]
+        final_output_dir_img = os.path.join(final_output_dir, "expacc")
+        os.makedirs(final_output_dir_img, exist_ok=True)
+        SaveSegImage(conf, fake_name, outimg, final_output_dir_img, ".png", True)
+
+        #sauvegrade sans accumulation pour référence
+        final_output_dir_noacc = os.path.join(final_output_dir, "noacc")
+        os.makedirs(final_output_dir_noacc, exist_ok=True)
+        SaveSegImage(conf, fake_name, ensemble_pred, final_output_dir_noacc, ".png", True)
+        all_images[:, :, i] = ensemble_pred
+        
+    rupt = detect_rupture_accumulative(all_images, conf)
+
+    for t in range(n):
+        fake_name = [[os.path.basename(images_orig[t])]]
+        final_output_dir_img = os.path.join(final_output_dir, "rupt")
+        os.makedirs(final_output_dir_img, exist_ok=True)
+        SaveSegImage(conf, fake_name, rupt[:, :, t], final_output_dir_img, ".png", True)
+
+def detect_rupture_accumulative(all_images, conf):
+    H, W, T = all_images.shape
+
+    X = all_images.reshape(H * W, T).T 
+    
+    # Rupture detection
+    csum = np.zeros((T + 1, H * W), dtype=np.float32)
+    np.cumsum(X, axis=0, out=csum[1:]) # Somme cumulative
+    total = csum[T]
+    
+    max_delta_val = np.zeros(H * W, dtype=np.float32)
+    max_delta_time = np.zeros(H * W, dtype=np.int32)
+    
+    for i in range(1, T):
+        mu1 = csum[i] / i
+        mu2 = (total - csum[i]) / (T - i)
+        
+        diff = np.abs(mu2 - mu1)
+        
+        better_mask = diff > max_delta_val # New maximum found
+        max_delta_val[better_mask] = diff[better_mask] # Update maximum value
+        max_delta_time[better_mask] = i # Update time index
+    
+    # Slope detection
+    diffs = np.abs(X[1:] - X[:-1])
+    slope_times = np.argmax(diffs, axis=0) + 1 # contains time index
+
+    # slope and rupture must match in time 
+    is_strong_rupture = max_delta_val > conf['Thresh']
+    time_gap = np.abs(max_delta_time - slope_times)
+    is_temporally_consistent = time_gap == 0
+    
+    final_valid_mask = is_strong_rupture & is_temporally_consistent
+    
+    birth_dates = np.zeros(H * W, dtype=np.int32)
+    birth_dates[final_valid_mask] = slope_times[final_valid_mask]
+    
+    starts_existing = X[0] > conf['Thresh']
+    birth_dates[starts_existing] = 1 
+
+    time_grid = np.arange(T).reshape(T, 1) # create time grid
+    birth_dates_broad = birth_dates.reshape(1, H * W) # reshape birth dates
+    sequence_mask = (time_grid >= birth_dates_broad) & (birth_dates_broad > 0) # if time >= birth date and birth date > 0
+    sequence_mask = sequence_mask.T.reshape(H, W, T) # reshape to original dimensions
+    
+    return all_images * sequence_mask.astype(float) 
 
 def run_ensemble_pipeline(conf, models_root, data_root, output_root, use_crf):
-    
-    # 1. Définir les modèles disponibles
-    # Vous pouvez ajuster cette liste selon vos dossiers réels
-    all_potential_models = ['ResUNetDS', 'UNet', 'SegNet', 'DeepLab']
+    all_potential_models = ['UNet', 'ResUNet', 'ResUNetDS', 'SegNet', 'DeepLab']
     available_models = [m for m in all_potential_models if os.path.exists(os.path.join(models_root, m))]
     
     if not available_models:
@@ -177,26 +236,21 @@ def run_ensemble_pipeline(conf, models_root, data_root, output_root, use_crf):
 
     print(f"Models found: {available_models}")
 
-    # 2. Trouver les epochs
     ref_model_dir = os.path.join(models_root, available_models[0])
     epoch_dirs = [d for d in os.listdir(ref_model_dir) if "epoch_" in d and os.path.isdir(os.path.join(ref_model_dir, d))]
     epoch_dirs.sort(key=lambda s: int(re.search(r'\d+', s).group()))
     
     print(f"Epochs to process: {epoch_dirs}")
 
-    # 3. Trouver les sous-dossiers de données
     data_subdirs = [d for d in os.listdir(data_root) if os.path.isdir(os.path.join(data_root, d))]
-    
-    # --- MAIN LOOP ---
+    print("starting processing...")
     for epoch in epoch_dirs:
         print(f"\n=== Processing {epoch} ===")
         output_epoch_root = os.path.join(output_root, epoch)
         
-        # A. GENERATION INDIVIDUELLE
         for model_name in available_models:
             print(f"  > Generating masks for {model_name}...")
             
-            # Reset graph pour chaque modèle pour éviter conflits de variables
             tf.compat.v1.reset_default_graph() 
             sess = tf.compat.v1.Session()
             
@@ -208,11 +262,9 @@ def run_ensemble_pipeline(conf, models_root, data_root, output_root, use_crf):
                     print(f"    Skipping {model_name} (checkpoint missing for {epoch})")
                     continue
                 
-                # Initialisation du réseau
                 conf["batchSize"] = 1
                 conf["tileSize"] = [256, 256] 
                 
-                # Création du réseau
                 try:
                     net = RootNet(sess, conf, "RootNET", False)
                     net.restore(ckpt_path)
@@ -221,12 +273,12 @@ def run_ensemble_pipeline(conf, models_root, data_root, output_root, use_crf):
                     continue
 
                 for sub_data in data_subdirs:
+                    print(f"    Processing data subfolder: {sub_data}...")
                     input_subdir_path = os.path.join(data_root, sub_data)
                     output_model_subdir = os.path.join(output_epoch_root, model_name, sub_data)
                     mkdir(output_model_subdir)
                     
-                    # Si le dossier est déjà rempli, on peut skip (optionnel)
-                    # if len(os.listdir(output_model_subdir)) > 0: continue
+                    if len(os.listdir(output_model_subdir)) > 0: continue
 
                     Segment(net, conf, input_subdir_path, output_model_subdir, use_crf)
             
@@ -237,10 +289,14 @@ def run_ensemble_pipeline(conf, models_root, data_root, output_root, use_crf):
             finally:
                 sess.close()
 
-        # B. AGGREGATION (ENSEMBLE)
         print(f"  > Computing Ensemble for {epoch}...")
         for sub_data in data_subdirs:
             input_subdir_path = os.path.join(data_root, sub_data)
+            
+            final_output_dir = os.path.join(output_epoch_root, 'Ensemble', sub_data)
+            if os.path.exists(final_output_dir) and len(os.listdir(final_output_dir)) > 0:
+                print(f"    Skipping ensemble for {sub_data} (already exists)")
+                continue
             try:
                 compute_ensemble_for_subfolder(conf, input_subdir_path, output_epoch_root, available_models, sub_data, use_crf)
             except Exception as e:

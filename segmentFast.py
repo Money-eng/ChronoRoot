@@ -117,9 +117,9 @@ def SegmentUNet(conf, input_dir, output_dir, crf):
             q = denseCRF.inference(1)
             crf_map = np.array(q).reshape(2, w, h).transpose(2, 1, 0)
                     
-            accum = conf['Alpha'] * accum + crf_map[:,:,1]
+            accum = conf['Alpha'] * accum + crf_map[:,:,1] * (1.0 - conf['Alpha'])
         else:
-            accum = conf['Alpha'] * accum + segment[0,:,:,1]
+            accum = conf['Alpha'] * accum + segment[0,:,:,1] * (1.0 - conf['Alpha'])
         
         _, outimg = cv2.threshold(accum, conf['Thresh'], 1.0, cv2.THRESH_BINARY)
         SaveSegImage(conf, name, outimg, output_dir, ".png", True)

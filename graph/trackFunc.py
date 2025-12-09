@@ -107,7 +107,7 @@ def find_nearest_nodes(node, lnodes, thresh = 10):
     return p, d[p]
 
 
-def matchGraphs(graph1, graph2):
+def matchGraphs(graph1, graph2, seg = None):
     g1, pos1, weight1, clase1, nodetype1, age1 = graph1
     g2, pos2, weight2, clase2, nodetype2, age2 = graph2
     
@@ -161,13 +161,20 @@ def matchGraphs(graph1, graph2):
         seed_prev = gt.find_vertex(g1, nodetype1, "Ini")
         p1 = pos1[seed_prev[0]]
         v, d = find_nearest_b(p1, pos_vertex2)
+        
+        import matplotlib.pyplot as plt
+        plt.figure()
+        plt.imshow(seg, cmap='gray')
+        plt.scatter(pos_vertex2[:,0], pos_vertex2[:,1], c='b')
+        plt.scatter(p1[0], p1[1], c='r')
+        plt.show()
         if d < 20:
             age2[v] = age1[seed_prev[0]] + 1
             nodetype2[v] = "Ini"
             seed = g2.vertex(v)
             available[v] = 0
         else:
-            #print('No SEED')
+            print('No SEED1')
             raise Exception ("No seed point")
     
     pos_vertex2[:,0] = pos_vertex2[:,0] * available
@@ -216,7 +223,7 @@ def matchGraphs(graph1, graph2):
             nodetype2[v] = "Ini"
             seed = g2.vertex(v)
         else:
-            #print('No SEED')
+            print('No SEED2')
             raise Exception ("No seed point")
             
     # edge tracking

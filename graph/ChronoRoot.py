@@ -1,19 +1,11 @@
 """ 
 ChronoRoot: High-throughput phenotyping by deep learning reveals novel temporal parameters of plant root system architecture
-Copyright (C) 2020 Nicolás Gaggion
+Copyright (C) 2020 Nicolás Gaggion (Modified Wrapper for Multi-Root Analysis)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 import os
@@ -21,8 +13,10 @@ import csv
 import cv2
 import numpy as np
 import json
-from pathlib import Path
+import matplotlib.pyplot as plt
+from scipy.ndimage import label, find_objects
 
+# Imports originaux de ChronoRoot
 from .fileFunc import createResultFolder, loadPath, getROIandSeed
 from .imageFunc import getCleanSeg, getCleanSke, savePlotImages, saveEmpty
 from .graphFunc import createGraph, saveGraph, saveProps
@@ -31,463 +25,335 @@ from .rsmlFunc import createTree
 from .graphPostProcess import trimGraph
 from .dataWork import dataWork
 
-plant_number = 0
+# --- Configuration ---
+DEBUG_VISUALIZATION = True  # Mettre à True pour voir les boîtes et seeds avant analyse
 
-def getImgName(image, conf, index):
-    global plant_number
-    return conf['Project'] + '/' + conf['fileKey'] +  '_I' + str(index) + '_P' + str(plant_number) + conf['FileExt']
+def getImgName(image, conf):
+    return image.replace(conf['Path'], '').replace('/', '')
 
-def _to_jsonable(obj):
-    """Recursively convert common non-JSON types (numpy, Path, sets) to JSON-safe forms."""
-    # numpy scalar types
-    if isinstance(obj, (np.integer,)):
-        return int(obj)
-    if isinstance(obj, (np.floating,)):
-        return float(obj)
-    if isinstance(obj, (np.bool_,)):
-        return bool(obj)
-    # numpy arrays
-    if isinstance(obj, np.ndarray):
-        return obj.tolist()
-    # paths
-    if isinstance(obj, Path):
-        return str(obj)
-    # sets/tuples
-    if isinstance(obj, set):
-        return list(obj)
-    if isinstance(obj, tuple):
-        return list(obj)
-    # mappings and sequences
-    if isinstance(obj, dict):
-        return {k: _to_jsonable(v) for k, v in obj.items()}
-    if isinstance(obj, (list,)):
-        return [_to_jsonable(v) for v in obj]
-    # fallback
-    return obj
-
-def automatic_seed_from_segmentation(seg: np.ndarray, rsml_path: str, time_step: int):
+def find_stable_seed(seg_files, bbox, obj_mask_last, first_seg_full):
     """
-    map_label_to_seed = {}
-    map_label_to_bounding_box = {}
-    for plant in plants:
-        roots = root_vertices(plant)
-        primary_root = roots[0]  # 1 primary root per plant
-        geom = plant.properties()['geometry'][primary_root]
-        for x, y in geom:
-            x, y = int(round(x)), int(round(y))
-            label_at_pos = ccs[0][y, x]
-            if label_at_pos > 0 and seg[y, x] > 0:
-                if label_at_pos in map_label_to_seed:
-                    print(f"Warning: multiple seeds for label {label_at_pos}, keeping none")
-                    # remove previous seed
-                    del map_label_to_seed[label_at_pos]
-                    break
-                map_label_to_seed[label_at_pos] = (x, y)
-                # find bounding box of the connected component
-                ys, xs = np.where(ccs[0] == label_at_pos)
-                min_x, max_x = xs.min(), xs.max()
-                min_y, max_y = ys.min(), ys.max()
-                map_label_to_bounding_box[label_at_pos] = (min_y, max_y, min_x, max_x)
-                break
+    Cherche un point de départ (seed) stable en calculant l'intersection
+    temporelle de la racine à travers toutes les images.
     """
-    from rsml import rsml2mtg
-    from scipy.ndimage import label
-    from utils.mtg_operations import extract_mtg_at_time_t, extract_plant_sub_mtg
-    from rsml.misc import plant_vertices, root_vertices
+    y_min, y_max, x_min, x_max = bbox
+    
+    # 1. Initialisation avec le masque de l'objet sur la dernière image
+    temporal_intersection = obj_mask_last.copy()
+    
+    # 2. Intersection temporelle stricte (remonter le temps ou parcourir tout)
+    for segFile in seg_files:
+        img_t = cv2.imread(segFile, cv2.IMREAD_GRAYSCALE)
+        if img_t is None: continue # Sécurité image corrompue
 
-    ccs = label(seg)
-    mtg_gt = rsml2mtg(rsml_path)
-    
-    mtg_gt_t = extract_mtg_at_time_t(mtg_gt, time_step)
-    plants = [extract_plant_sub_mtg(mtg_gt_t, r) for r in plant_vertices(mtg_gt_t)]
-    print(f"Found {len(plants)} plants in RSML at time step {time_step}")
-    # for each plant, compute its bounding box
-    # and check if it intersects with any other plant
-    map_label_to_bounding_box = {}
-    map_label_to_seed = {}
-    map_label_to_plant = {}
-    for plant in plants:
-        xs = []
-        ys = []
-        lab = - 1
-        map_label_to_plant = {lab: None}
-        try:
-            geo = plant.properties()['geometry']
-            # assert dict is not empty
-            assert len(geo) > 0
-        except AssertionError:
-            print("No geometry for root or just no geometry, skipping")
-            continue
-        for r in root_vertices(plant):
-            geom = geo[r]
-            xs.extend([int(round(x)) for x, y in geom])
-            ys.extend([int(round(y)) for x, y in geom])
-            if map_label_to_plant[lab] != plant:
-                for x, y in geom:
-                    x, y = int(round(x)), int(round(y))
-                    label_at_pos = ccs[0][y, x]
-                    if label_at_pos > 0 and seg[y, x] > 0:
-                        map_label_to_seed[label_at_pos] = (x, y)
-                        lab = label_at_pos
-                        map_label_to_plant[label_at_pos] = plant
-                        break
-        min_x, max_x = min(xs), max(xs)
-        min_y, max_y = min(ys), max(ys)
-        map_label_to_bounding_box[lab] = (min_y, max_y, min_x, max_x)
-    
-    # # plot label, seed, bounding box on seg
-    # import matplotlib.pyplot as plt
-    # import matplotlib.patches as patches
-    # from matplotlib.cm import get_cmap
-    # cmap = get_cmap('tab20')
-    # fig, ax = plt.subplots(1)
-    # ax.imshow(seg, cmap='gray')
-    # for i, (lab, seed) in enumerate(map_label_to_seed.items()):
-    #     color = cmap(i % 20)
-    #     ax.plot(seed[0], seed[1], 'o', color=color, markersize=10)
-    #     if lab in map_label_to_bounding_box:
-    #         bbox = map_label_to_bounding_box[lab]
-    #         rect = patches.Rectangle((bbox[2], bbox[0]), bbox[3]-bbox[2], bbox[1]-bbox[0], linewidth=2, edgecolor=color, facecolor='none')
-    #         ax.add_patch(rect)
-    #         ax.text(bbox[2], bbox[0]-5, str(lab), color=color, fontsize=12, weight='bold')
-    # plt.show()
-    
-    return map_label_to_seed, map_label_to_bounding_box
-
-def ChronoRootAnalyzer(conf: dict, images: list, segFiles: list, rsml_path: str):
-    global plant_number
-    plant_number = 0
-    # Select connected component (assuming roots do not cross) and select seed point in the roi 
-    
-    label_2_seed, label_2_bbox = automatic_seed_from_segmentation(segFiles[-1], rsml_path, -1)
-    for label in label_2_seed.keys():
-        plant_number += 1
+        crop_t = img_t[y_min:y_max, x_min:x_max]
+        _, bin_crop_t = cv2.threshold(crop_t, 127, 255, cv2.THRESH_BINARY)
         
-        seed = label_2_seed[label]
-        bbox = label_2_bbox[label]
-        seed = list(seed)
-        originalSeed = seed.copy()
+        # Intersection logique
+        temporal_intersection = cv2.bitwise_and(temporal_intersection, bin_crop_t)
         
-        saveFolder, graphsPath, imagePath, rsmlPath = createResultFolder(conf)
-        
-        metadata = {}
-        metadata['bounding box'] = list(bbox)
-        metadata['seed'] = seed
-        metadata['folder'] = conf['Path']
-        #metadata['segFolder'] = conf['SegPath']
-        metadata['info'] = conf['fileKey']
-
-        print(metadata)
-        metapath = os.path.join(saveFolder, 'metadata.json')
-
-        with open(metapath, 'w') as fp:
-            json.dump(_to_jsonable(metadata), fp)
-
-        start = 0
-        N = len(segFiles)
-        pfile = os.path.join(saveFolder, "Results.csv") # For CSV Saver
-        conf['captureTime'] = conf['captureTimes'][0]
-        try:
+        # Optimisation : Si intersection vide, inutile de continuer
+        if not np.any(temporal_intersection):
+            break
             
-            with open(pfile, 'w+') as csv_file:
-                image_name = getImgName(images[0], conf, 0)
-                csv_writer = csv.writer(csv_file)
-                row0 = ['FileName', 'TimeStep','MainRootLength','LateralRootsLength','NumberOfLateralRoots','TotalLength']
-                csv_writer.writerow(row0)
-
-                ### First, it begins by obtaining the first segmentation
-                for i in range(0, N):
-                    segFile = segFiles[i]
-                    seg, segFound = getCleanSeg(segFile, bbox, originalSeed, originalSeed)
-                    
-                    original = images[i][bbox[0]:bbox[1],bbox[2]:bbox[3]] # cv2.imread(images[i])[bbox[0]:bbox[1],bbox[2]:bbox[3]]
-                    
-                    if segFound:
-                        ske, bnodes, enodes, flag = getCleanSke(seg) # Skeleton, branch nodes, end nodes and flag
-                        if flag:
-                            start = i
-                            break
-                    
-                    image_name = getImgName(images[i], conf, i)
-                    saveProps(image_name, i, False, csv_writer, i) # Save empty properties
-                    saveEmpty(image_name, imagePath, original, seg) # Save empty images
-                
-                print('Growth Begin')
-                
-                grafo, seed, ske2 = createGraph(ske.copy(), seed, enodes, bnodes) # Create networkx graph from skeleton
-                grafo, ske, ske2 = trimGraph(grafo, ske, ske2)
-                grafo = graphInit(grafo)
-                
-                image_name = getImgName(images[i], conf, i)
-                gPath = os.path.join(graphsPath, image_name.replace(conf['FileExt'],'.xml.gz'))
-                saveGraph(grafo, gPath)
-                
-                rsmlTree, numberLR = createTree(conf, i, images, grafo, ske, ske2)
-                
-                rsml = os.path.join(rsmlPath, image_name.replace(conf['FileExt'],'.rsml'))
-                rsmlTree.write(open(rsml, 'w'), encoding='unicode')        
-
-                saveProps(image_name, i, grafo, csv_writer, numberLR)
-
-                original = images[i][bbox[0]:bbox[1],bbox[2]:bbox[3]] # cv2.imread(images[i])[bbox[0]:bbox[1],bbox[2]:bbox[3]]
-                savePlotImages(image_name, imagePath, original, seg, grafo, ske2)
-                
-                segErrorFlag = False #Previous time-step error
-                trackCount = 0
-                
-                for i in range(start+1, N):
-                    image_name = getImgName(images[i], conf, i)
-                    print('TimeStep', i+1, 'of', N)
-                    conf['captureTime'] = conf['captureTimes'][i]
-                    errorFlag_ = False
-                    
-                    segFile = segFiles[i]
-                    seg, flag1 = getCleanSeg(segFile, bbox, seed.tolist(), originalSeed)
-                    
-                    if flag1:
-                        ske, bnodes, enodes, flag2 = getCleanSke(seg)
-                        if not flag2:
-                            print("Error in the skeleton")
-                            errorFlag_ = True
-                    else:
-                        print("Error in the segmentation")
-                        errorFlag_ = True
-                    
-                    trackError = False
-                
-                    if not errorFlag_:               
-                        grafo2, seed, ske2_ = createGraph(ske.copy(), seed, enodes, bnodes)
-                        grafo2, ske_, ske2_ = trimGraph(grafo2, ske.copy(), ske2_)
-                        
-                        if not segErrorFlag:
-                            try:
-                                grafo = matchGraphs(grafo, grafo2) # good for buinding 2D+t rsmls
-                                ske =  ske_.copy()
-                                ske2 = ske2_.copy()
-                            except:
-                                print("Error on node tracking")
-                                trackError = True
-                        else:
-                            grafo = graphInit(grafo2)
-                            ske =  ske_.copy()
-                            ske2 = ske2_.copy()
-                            
-                    else:
-                        image_name = getImgName(images[i], conf, i)
-                        saveProps(image_name, i, False, csv_writer, i)
-                        saveEmpty(image_name, imagePath, original, seg)
-                    
-                    segErrorFlag = errorFlag_
-                                
-                    if not segErrorFlag and not trackError:           
-                        gPath = os.path.join(graphsPath, image_name.replace(conf['FileExt'],'.xml.gz'))
-                        saveGraph(grafo, gPath)
-                
-                        seedrsml = None
-                        v = grafo[0].get_vertices()
-                        for k in v:
-                            if grafo[4][k] == "Ini":
-                                seedrsml = grafo[1][k]
-                                seedrsml = np.array(seed, dtype='int')
-                        
-                        if seedrsml is None:
-                            trackError = True
-                            image_name = getImgName(images[i], conf, i)
-                            saveProps(image_name, i, False, csv_writer, i)
-                            saveEmpty(image_name, imagePath, original, seg)
-                        else:
-                            rsmlTree, numberLR = createTree(conf, i, images, grafo, ske, ske2)
-                            rsml = os.path.join(rsmlPath, image_name.replace(conf['FileExt'],'.rsml'))
-                            rsmlTree.write(open(rsml, 'w'), encoding='unicode')        
-                            image_name = getImgName(images[i], conf, i)
-                            saveProps(image_name, i, grafo, csv_writer, numberLR)
-
-                            original = images[i][bbox[0]:bbox[1],bbox[2]:bbox[3]]
-                            savePlotImages(image_name, imagePath, original, seg, grafo, ske2)
-                
-                    if trackError and trackCount > 5:
-                        print('Analysis ended early at timestep', i, 'of', N)
-                        break
-                    elif trackError:
-                        trackCount += 1
-                    else:
-                        trackCount = 0
-            
-            try:
-                dataWork(conf, pfile, saveFolder)
-            except:
-                print("Error in dataWork")
-                pass
-        except Exception as e:
-            print(f"Error processing plant {plant_number} with label {label}: {e}")
-            continue
-
-def ChronoRootAnalyzerOLD(conf):
-    ext = "*" + conf["FileExt"]
-    all_files = loadPath(conf['Path'], ext) 
-    print(all_files)
-    images = [file for file in all_files if 'mask' not in file]
-       
-    ext = "*" + conf["FileExt"]
-    all_files = loadPath(conf['SegPath'], ext) 
-    print(all_files)
-    segFiles = [file for file in all_files if 'mask' in file] # look if segmentation files exist by checking 'mask' in the name
+    # 3. Extraction du seed (point le plus haut)
+    ys, xs = np.where(temporal_intersection == 255)
     
-    lim = conf['Limit'] 
+    if len(ys) > 0:
+        # On prend le point le plus haut (y min)
+        idx = ys.argmin()
+        return int(ys[idx]), int(xs[idx])
     
-    print('Number of images found:', len(images))
-    print('Number of segmentations found:', len(segFiles))
+    # 4. Fallback : Intersection First & Last seulement si l'intersection totale échoue
+    # (Cas où la racine a bougé un peu mais le début reste fixe)
+    sub_first = first_seg_full[y_min:y_max, x_min:x_max]
+    ys_fb, xs_fb = np.where((sub_first == 255) & (obj_mask_last == 255))
     
-    if lim!=0:
-        images = images[:lim]
-        segFiles = segFiles[:lim]
+    if len(ys_fb) > 0:
+        idx = ys_fb.argmin()
+        return int(ys_fb[idx]), int(xs_fb[idx])
+        
+    return 0, 0 # Échec total
 
-    # Select connected component (assuming roots do not cross) and select seed point in the roi 
-    bbox, seed = getROIandSeed(conf, images, segFiles) # bounding box and seed point
-    seed = list(seed[0])
-    originalSeed = seed.copy()
+def analyze_single_component(conf, images, segFiles, bbox, local_seed, root_id):
+    """
+    Exécute le pipeline ChronoRoot complet pour UNE seule racine identifiée.
+    """
+    print(f"\n--- Processing Root Component #{root_id} ---")
     
-    saveFolder, graphsPath, imagePath, rsmlPath = createResultFolder(conf)
+    # Conversion seed local (dans bbox) -> global (dans image)
+    # Le code original semble parfois utiliser seed relative ou absolue selon les fonctions.
+    # getCleanSeg prend généralement (bbox, seed). Si getCleanSeg crop l'image, 
+    # seed doit être relative. Si elle utilise l'image entière, seed doit être absolue.
+    # Dans le doute, basons-nous sur l'usage standard : souvent on passe le seed global.
+    global_seed = [int(local_seed[0]), int(local_seed[1])]
     
-    metadata = {}
-    metadata['bounding box'] = bbox.tolist()
-    metadata['seed'] = seed
-    metadata['folder'] = conf['Path']
-    metadata['segFolder'] = conf['SegPath']
-    metadata['info'] = conf['fileKey']
+    # IMPORTANT : Cloner la conf pour ne pas écraser les résultats des autres racines
+    # On modifie le 'fileKey' ou le dossier de sortie pour séparer les résultats
+    current_conf = conf.copy()
+    original_key = current_conf.get('fileKey', 'result')
+    current_conf['fileKey'] = f"{original_key}_root_{root_id}"
+    
+    # Création des dossiers pour CETTE racine
+    saveFolder, graphsPath, imagePath, rsmlPath = createResultFolder(current_conf)
+    
+    # Metadata
+    metadata = {
+        'bounding box': bbox,
+        'seed': global_seed,
+        'folder': current_conf['Path'],
+        'segFolder': current_conf['SegPath'],
+        'info': current_conf['fileKey'],
+        'root_id': root_id
+    }
+    
+    with open(os.path.join(saveFolder, 'metadata.json'), 'w') as fp:
+        json.dump(metadata, fp)
 
-    print(metadata)
-    metapath = os.path.join(saveFolder, 'metadata.json')
-
-    with open(metapath, 'w') as fp:
-        json.dump(_to_jsonable(metadata), fp)
-
-    start = 0
+    # --- Début du pipeline original ---
     N = len(images)
-    pfile = os.path.join(saveFolder, "Results.csv") # For CSV Saver
+    start = 0
+    pfile = os.path.join(saveFolder, "Results.csv")
+    
+    # Variables d'état
+    ske = None
+    ske2 = None
+    grafo = None
     
     with open(pfile, 'w+') as csv_file:
         csv_writer = csv.writer(csv_file)
-        row0 = ['FileName', 'TimeStep','MainRootLength','LateralRootsLength','NumberOfLateralRoots','TotalLength']
-        csv_writer.writerow(row0)
+        csv_writer.writerow(['FileName', 'TimeStep','MainRootLength','LateralRootsLength','NumberOfLateralRoots','TotalLength'])
         
-        ### First, it begins by obtaining the first segmentation
-        for i in range(0, N):
-            print('TimeStep', i+1, 'of', N)
+        # Phase 1: Trouver la première segmentation valide
+        for i in range(N):
+            print(f"Root {root_id} - Init Step {i+1}/{N}")
             segFile = segFiles[i]
-            seg, segFound = getCleanSeg(segFile, bbox, originalSeed, originalSeed)
+            # Note: getCleanSeg utilise global_seed ici selon la logique usuelle
+            seg, segFound = getCleanSeg(segFile, np.array(bbox), global_seed, global_seed)
             
-            original = cv2.imread(images[i])[bbox[0]:bbox[1],bbox[2]:bbox[3]]
+            # Chargement Crop Image Originale
+            full_img = cv2.imread(images[i])
+            if full_img is None: continue
+            original = full_img[bbox[0]:bbox[1], bbox[2]:bbox[3]]
             
             if segFound:
-                ske, bnodes, enodes, flag = getCleanSke(seg) # Skeleton, branch nodes, end nodes and flag
+                ske, bnodes, enodes, flag = getCleanSke(seg)
                 if flag:
                     start = i
                     break
             
-            image_name = getImgName(images[i], conf, i)
-            saveProps(image_name, i, False, csv_writer, 0) # Save empty properties
-            saveEmpty(image_name, imagePath, original, seg) # Save empty images
+            # Sauvegarde frames vides
+            image_name = getImgName(images[i], current_conf)
+            saveProps(image_name, i, False, csv_writer, 0)
+            saveEmpty(image_name, imagePath, original, seg)
+            
+        print(f"Root {root_id} - Growth Begin at step {start}")
         
-        print('Growth Begin')
-        
-        grafo, seed, ske2 = createGraph(ske.copy(), seed, enodes, bnodes) # Create networkx graph from skeleton
+        # Initialisation du Graphe
+        grafo, seed_graph, ske2 = createGraph(ske.copy(), global_seed, enodes, bnodes)
+        if hasattr(seed_graph, '__iter__') or isinstance(seed_graph, np.ndarray):
+             # Écrase les types numpy (int64) par des int Python
+            seed_graph = [int(seed_graph[0]), int(seed_graph[1])]
+        else:
+            # Fallback si format inattendu
+            seed_graph = [int(global_seed[0]), int(global_seed[1])]
         grafo, ske, ske2 = trimGraph(grafo, ske, ske2)
         grafo = graphInit(grafo)
         
-        image_name = getImgName(images[i], conf, i)
-        
-        gPath = os.path.join(graphsPath, image_name.replace(conf['FileExt'],'.xml.gz'))
+        # Sauvegarde premier graphe
+        image_name = getImgName(images[start], current_conf)
+        gPath = os.path.join(graphsPath, image_name.replace(current_conf['FileExt'],'.xml.gz'))
         saveGraph(grafo, gPath)
         
-        rsmlTree, numberLR = createTree(conf, i, images, grafo, ske, ske2)
+        rsmlTree, numberLR = createTree(current_conf, start, images, grafo, ske, ske2)
+        rsmlTree.write(open(os.path.join(rsmlPath, image_name.replace(current_conf['FileExt'],'.rsml')), 'w'), encoding='unicode')
         
-        rsml = os.path.join(rsmlPath, image_name.replace(conf['FileExt'],'.rsml'))
-        rsmlTree.write(open(rsml, 'w'), encoding='unicode')        
-        
-        saveProps(image_name, i, grafo, csv_writer, numberLR)
-        
-        original = cv2.imread(images[i])[bbox[0]:bbox[1],bbox[2]:bbox[3]]
+        saveProps(image_name, start, grafo, csv_writer, numberLR)
         savePlotImages(image_name, imagePath, original, seg, grafo, ske2)
         
-        segErrorFlag = False #Previous time-step error
+        # Phase 2: Tracking temporel
+        segErrorFlag = False
         trackCount = 0
         
-        for i in range(start+1, N):
-            print('TimeStep', i+1, 'of', N)
+        for i in range(start + 1, N):
+            print(f"Root {root_id} - Tracking Step {i+1}/{N}")
             errorFlag_ = False
+            trackError = False
             
             segFile = segFiles[i]
-            seg, flag1 = getCleanSeg(segFile, bbox, seed.tolist(), originalSeed)
+            seg, flag1 = getCleanSeg(segFile, np.array(bbox), seed_graph, global_seed)
             
+            # Re-load original for display
+            full_img = cv2.imread(images[i])
+            original = full_img[bbox[0]:bbox[1], bbox[2]:bbox[3]] if full_img is not None else np.zeros_like(seg)
+
             if flag1:
-                ske, bnodes, enodes, flag2 = getCleanSke(seg)
+                ske_curr, bnodes, enodes, flag2 = getCleanSke(seg)
                 if not flag2:
-                    print("Error in the skeleton")
+                    print("Error in skeleton")
                     errorFlag_ = True
             else:
-                print("Error in the segmentation")
+                print("Error in segmentation")
                 errorFlag_ = True
             
-            trackError = False
-        
-            if not errorFlag_:               
-                grafo2, seed, ske2_ = createGraph(ske.copy(), seed, enodes, bnodes)
-                grafo2, ske_, ske2_ = trimGraph(grafo2, ske.copy(), ske2_)
+            if not errorFlag_:
+                grafo2, _, ske2_ = createGraph(ske_curr.copy(), seed_graph, enodes, bnodes)
+                grafo2, ske_, ske2_ = trimGraph(grafo2, ske_curr.copy(), ske2_)
                 
                 if not segErrorFlag:
                     try:
-                        grafo = matchGraphs(grafo, grafo2)
-                        ske =  ske_.copy()
+                        grafo = matchGraphs(grafo, grafo2, seg=seg)
+                        ske = ske_.copy()
                         ske2 = ske2_.copy()
-                    except:
-                        print("Error on node tracking")
+                    except Exception as e:
+                        print(f"Error on node tracking: {e}")
                         trackError = True
                 else:
+                    # Reset tracking if previous frame was bad
                     grafo = graphInit(grafo2)
-                    ske =  ske_.copy()
+                    ske = ske_.copy()
                     ske2 = ske2_.copy()
-                    
             else:
-                image_name = getImgName(images[i], conf, i)
+                image_name = getImgName(images[i], current_conf)
                 saveProps(image_name, i, False, csv_writer, 0)
                 saveEmpty(image_name, imagePath, original, seg)
-            
+                
             segErrorFlag = errorFlag_
-                        
-            if not segErrorFlag and not trackError:           
-                gPath = os.path.join(graphsPath, image_name.replace(conf['FileExt'],'.xml.gz'))
+            
+            if not segErrorFlag and not trackError:
+                image_name = getImgName(images[i], current_conf)
+                gPath = os.path.join(graphsPath, image_name.replace(current_conf['FileExt'],'.xml.gz'))
                 saveGraph(grafo, gPath)
-        
+                
+                # Vérification seed dans graphe
                 seedrsml = None
                 v = grafo[0].get_vertices()
                 for k in v:
                     if grafo[4][k] == "Ini":
-                        seedrsml = grafo[1][k]
-                        seedrsml = np.array(seed, dtype='int')
+                        seedrsml = grafo[1][k] # Just check existence
                 
                 if seedrsml is None:
                     trackError = True
-                    image_name = images[i].replace(conf['Path'],'').replace('/','')
                     saveProps(image_name, i, False, csv_writer, 0)
                     saveEmpty(image_name, imagePath, original, seg)
                 else:
-                    rsmlTree, numberLR = createTree(conf, i, images, grafo, ske, ske2)
-                    rsml = os.path.join(rsmlPath, image_name.replace(conf['FileExt'],'.rsml'))
-                    rsmlTree.write(open(rsml, 'w'), encoding='unicode')        
-        
-                    image_name = getImgName(images[i], conf, i)
-                    saveProps(image_name, i, grafo, csv_writer, numberLR)
+                    rsmlTree, numberLR = createTree(current_conf, i, images, grafo, ske, ske2)
+                    rsmlTree.write(open(os.path.join(rsmlPath, image_name.replace(current_conf['FileExt'],'.rsml')), 'w'), encoding='unicode')
                     
-                    original = cv2.imread(images[i])[bbox[0]:bbox[1],bbox[2]:bbox[3]]
+                    saveProps(image_name, i, grafo, csv_writer, numberLR)
                     savePlotImages(image_name, imagePath, original, seg, grafo, ske2)
-        
+            
+            # Gestion d'arrêt prématuré si trop d'erreurs
             if trackError and trackCount > 5:
-                print('Analysis ended early at timestep', i, 'of', N)
+                print(f"Analysis ended early at timestep {i}")
                 break
             elif trackError:
                 trackCount += 1
             else:
                 trackCount = 0
+                
+    # Post-traitement des données CSV
+    dataWork(current_conf, pfile, saveFolder)
+
+
+def ChronoRootAnalyzer(conf):
+    # 1. Chargement des fichiers
+    ext = "*" + conf["FileExt"]
+    all_files_img = loadPath(conf['Path'], ext)
+    images = [f for f in all_files_img] # Filtre basique
     
-    dataWork(conf, pfile, saveFolder)
+    all_files_seg = loadPath(conf['SegPath'], ext)
+    segFiles = [f for f in all_files_seg]   # Filtre basique (selon ton code)
+    
+    # Application de la limite
+    lim = conf.get('Limit', 0)
+    if lim != 0:
+        images = images[:lim]
+        segFiles = segFiles[:lim]
+
+    if not segFiles:
+        print("No segmentation files found.")
+        return
+
+    # 2. Détection des composantes (Racines multiples)
+    print("Detecting root systems in the last frame...")
+    
+    lastSegFile = segFiles[-1]
+    firstSegFile = segFiles[0]
+    
+    # Chargement images de référence (binaire)
+    segLast = cv2.imread(lastSegFile, cv2.IMREAD_GRAYSCALE)
+    segLast = cv2.threshold(segLast, 127, 255, cv2.THRESH_BINARY)[1]
+    
+    segFirst = cv2.imread(firstSegFile, cv2.IMREAD_GRAYSCALE)
+    segFirst = cv2.threshold(segFirst, 127, 255, cv2.THRESH_BINARY)[1]
+    
+    # Étiquetage des composantes connexes
+    labeled_array, num_features = label(segLast)
+    objects = find_objects(labeled_array)
+    
+    roots_to_process = []
+    
+    for i, obj in enumerate(objects):
+        if obj is None: continue
+        
+        # Extraction BBox
+        y_min, y_max = int(obj[0].start), int(obj[0].stop)
+        x_min, x_max = int(obj[1].start), int(obj[1].stop)
+        bbox = (y_min, y_max, x_min, x_max)
+        
+        # Création masque local pour isoler cet objet spécifique
+        # (Pour ne pas calculer l'intersection avec la racine voisine)
+        sub_mask = (labeled_array[y_min:y_max, x_min:x_max] == (i + 1)).astype(np.uint8) * 255
+        
+        # Recherche du Seed Stable
+        local_seed_y, local_seed_x = find_stable_seed(segFiles, bbox, sub_mask, segFirst)
+        
+        # Si le seed est (0,0), c'est souvent une erreur ou un artefact, on peut filtrer ici si besoin
+        roots_to_process.append({
+            'id': i + 1,
+            'bbox': bbox,
+            'local_seed': (local_seed_y, local_seed_x)
+        })
+
+    print(f"Found {len(roots_to_process)} separate root systems.")
+
+    # 3. Visualisation (Optionnelle)
+    if DEBUG_VISUALIZATION:
+        plt.figure(figsize=(10, 10))
+        plt.title("Detected Roots & Stable Seeds (Close window to continue)")
+        plt.imshow(segLast, cmap='gray')
+        plt.imshow(segFirst, cmap='jet', alpha=0.3)
+        
+        for root in roots_to_process:
+            bb = root['bbox'] # ymin, ymax, xmin, xmax
+            ls = root['local_seed']
+            
+            # Rectangle
+            rect = plt.Rectangle((bb[2], bb[0]), bb[3]-bb[2], bb[1]-bb[0],
+                                 edgecolor='red', facecolor='none', linewidth=2)
+            plt.gca().add_patch(rect)
+            
+            # Seed (Global coordinate for plot)
+            plt.scatter(ls[1] + bb[2], ls[0] + bb[0], c='yellow', marker='x', s=100)
+            plt.text(bb[2], bb[0]-5, f"ID {root['id']}", color='red', fontsize=12)
+            
+        plt.show()
+
+    # 4. Lancement de l'analyse pour chaque racine
+    for root in roots_to_process:
+        try:
+            analyze_single_component(
+                conf, 
+                images, 
+                segFiles, 
+                root['bbox'], 
+                root['local_seed'], 
+                root['id']
+            )
+        except Exception as e:
+            print(f"CRITICAL ERROR processing root {root['id']}: {e}")
+            import traceback
+            traceback.print_exc()
+
+    print("All roots processed.")
