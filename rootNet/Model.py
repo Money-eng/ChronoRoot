@@ -1,7 +1,7 @@
 import tensorflow as tf
 import logging
 
-from .modelUtils import pixel_wise_softmax, dice_coe_c1, dice_hard_coe
+from .modelUtils import pixel_wise_softmax, dice_coe_c1, dice_hard_coe, soft_cldice_loss
 from .unetModels import ResUNet, UNet, ResUNetDS
 from .SegNet import SegNet
 from .DeepLab import DeepLab
@@ -90,6 +90,14 @@ class RootNet(object):
 
             if config['loss'] == "cross_entropy":
                 self.loss = -tf.reduce_mean(self.y*tf.math.log(tf.clip_by_value(self.logits,1e-10,1.0)), name="cross_entropy")
+            elif config['loss'] == "cldice":
+                y_true_fg = self.y[:, :, :, 1:2] 
+                y_pred_fg = self.logits[:, :, :, 1:2]
+                
+                alpha = 0.5
+                iter_num = 10
+                
+                self.loss = soft_cldice_loss(y_true_fg, y_pred_fg, iter_=iter_num, alpha=alpha)
             else:
                 self.soft_dice = (1 - dice_coe_c1(self.logits, self.y))
                 self.loss = self.soft_dice

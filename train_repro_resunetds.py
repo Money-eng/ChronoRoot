@@ -21,7 +21,7 @@ CONF = {
     'iterPerEpoch': 100,
     'learning_rate': 0.0001,
     'dropout': 0.30,
-    'loss': 'cross_entropy',
+    'loss': 'cldice',
     'lambda1': 0.5,
     'lambda2': 0.5,
     'ckptDirRoot': 'modelWeights',
@@ -329,8 +329,10 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
             avg_train_loss = epoch_loss / current_conf['iterPerEpoch']
             train_writer.add_summary(make_summary(
                 'epoch_loss', avg_train_loss), epoch)
-
-            if len(d_val) > 0:
+            
+            epoch_dir = os.path.join(ckpt_base_path, f"epoch_{epoch+1}")
+            os.makedirs(epoch_dir, exist_ok=True)
+            if False: # len(d_val) > 0:
                 
                 do_heavy = ((epoch + 1) % HEAVY_METRICS_FREQ == 0) or ((epoch + 1) == current_conf['numEpochs'])
                 
@@ -339,10 +341,6 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
 
                 print(
                     f"Metriques de validation à la fin de l'époque {epoch+1} : {metrics}")
-
-                epoch_dir = os.path.join(ckpt_base_path, f"epoch_{epoch+1}")
-                os.makedirs(epoch_dir, exist_ok=True)
-                net.save(epoch_dir)
 
             epoch_pbar.set_postfix({'Train Loss': f"{avg_train_loss:.4f}"})
 

@@ -253,3 +253,90 @@ def resUnit(x, i_name, n_kernels, ksize, stride, padding, activation_function, i
                 bn=False, af=None, is_train=isTrain)
     
     return tf.add(x_, conv2)
+
+import tensorflow as tf
+
+class SoftSkeletonizeTF:
+    def __init__(self, num_iter=40):
+        self.num_iter = num_iter
+
+    def soft_erode(self, img):
+        """
+        Érosion douce utilisant le MaxPool négatif.
+        img shape: [Batch, H, W, C]
+        Traduction exacte de la logique PyTorch (Cross-shaped erosion)
+        """
+        # p1 : Kernel (3, 1) -> érosion verticale
+        # ksize=[1, 3, 1, 1] signifie [Batch, H, W, Channel]
+        p1 = -tf.nn.max_pool(-img, ksize=[1, 3, 1, 1], strides=[1, 1, 1, 1], padding='SAME')
+        
+        # p2 : Kernel (1, 3) -> érosion horizontale
+        p2 = -tf.nn.max_pool(-img, ksize=[1, 1, 3, 1], strides=[1, 1, 1, 1], padding='SAME')
+        
+        # On prend le min des deux (comme dans votre code torch.min(p1, p2))
+        return tf.minimum(p1, p2)
+
+    def soft_dilate(self, img):
+        """
+        Dilatation douce.
+        img shape: [Batch, H, W, C]
+        Kernel (3, 3)
+        """
+        return tf.nn.max_pool(img, ksize=[1, 3, 3, 1], strides=[1, 1, 1, 1], padding='SAME')
+
+    def soft_open(self, img):
+        return self.soft_dilate(self.soft_erode(img))
+
+    def soft_skel(self, img):
+        img1 = self.soft_open(img)
+        skel = tf.nn.relu(img - img1)
+
+        # Déroulement de la boucle dans le graphe TF
+        for j in range(self.num_iter):
+            img = self.soft_erode(img)
+            img1 = self.soft_open(img)
+            delta = tf.nn.relu(img - img1)
+            # skel = skel + relu(delta - skel * delta)
+            skel = skel + tf.nn.relu(delta - (skel * delta))
+
+        return skel
+
+    def __call__(self, img):
+        return self.soft_skel(img)
+
+def soft_dice_tf(y_true, y_pred, smooth=1.0):
+    """
+    Calcul du Dice Soft (similaire à votre fonction soft_dice).
+    Attend des entrées [Batch, H, W, 1] (Foreground uniquement)
+    """
+    intersection = tf.reduce_sum(y_true * y_pred)
+    coeff = (2. * intersection + smooth) / (tf.reduce_sum(y_true) + tf.reduce_sum(y_pred) + smooth)
+    return 1. - coeff
+
+def soft_cldice_loss(y_true, y_pred, iter_=10, alpha=0.5, smooth=1.0):
+    """
+    La loss combinée finale : Alpha * clDice + (1-Alpha) * Dice
+    """
+    # Instanciation du squelettiseur
+    # Note: iter_ doit être ajusté selon l'épaisseur des racines (10 est standard)
+    soft_skel_runner = SoftSkeletonizeTF(num_iter=iter_)
+    
+    # Calcul du Dice classique
+    dice_loss = soft_dice_tf(y_true, y_pred, smooth)
+    
+    # Calcul des squelettes
+    skel_pred = soft_skel_runner(y_pred)
+    skel_true = soft_skel_runner(y_true)
+    
+    # Calcul T-Prec (Précision Topologique)
+    # Somme sur tous les axes sauf le batch (ou global, selon votre implémentation PyTorch)
+    # Ici on fait une somme globale pour la stabilité, comme dans votre code PyTorch original
+    tprec = (tf.reduce_sum(skel_pred * y_true) + smooth) / (tf.reduce_sum(skel_pred) + smooth)
+    
+    # Calcul T-Sens (Sensibilité Topologique)
+    tsens = (tf.reduce_sum(skel_true * y_pred) + smooth) / (tf.reduce_sum(skel_true) + smooth)
+    
+    # clDice
+    cl_dice_val = 1.0 - 2.0 * (tprec * tsens) / (tprec + tsens)
+    
+    return (1.0 - alpha) * dice_loss + alpha * cl_dice_val
