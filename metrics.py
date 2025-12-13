@@ -4,7 +4,7 @@ from scipy.ndimage import distance_transform_edt
 from skimage.morphology import skeletonize
 from skimage.measure import label, regionprops
 
-from apsl_mask import skeleton_to_graph
+from apsl_mask import skeleton_to_graph_sampled
 from apls import APLSMetric
 
 EPSILON = 1e-8
@@ -55,7 +55,27 @@ def compute_advanced_metrics(pred_mask, gt_mask, do_heavy):
     results['centerline_dist'] = compute_centerline_metric(y_pred, y_true)
     
     if do_heavy:
-        results.update(compute_apls_metric(y_pred, y_true, snap_px=10))
+        
+        # for each connected component in y_true, extract the none zero pixels from y_pred and y_true
+        # and compute APLS for each component, then average the results 
+        
+        apls_result = compute_apls_metric(y_pred, y_true, snap_px=5)
+        
+        # On intègre directement les résultats globaux
+        results['apls'] = float(apls_result['apls'])
+        
+        # labeled_true = label(y_true, connectivity=2)
+        # apls_scores = []
+        # for region in regionprops(labeled_true):
+        #     minr, minc, maxr, maxc = region.bbox
+        #     y_true_cc = (labeled_true[minr:maxr, minc:maxc] == region.label)
+        #     y_pred_cc = y_pred[minr:maxr, minc:maxc]
+        #     apls_result = compute_apls_metric(y_pred_cc, y_true_cc, snap_px=20)
+        #     apls_scores.append(float(apls_result['apls']))
+        
+        # results.update({
+        #     'apls': float(np.mean(apls_scores)) if len(apls_scores) > 0 else 0.0
+        # })  
 
     return results
    
@@ -142,6 +162,8 @@ def compute_topology_metrics(y_pred, y_true):
     }
     
 def compute_apls_metric(y_pred, y_true, snap_px=10):
+    
+    
     pred_sum = np.count_nonzero(y_pred)
     true_sum = np.count_nonzero(y_true)
     
@@ -150,7 +172,6 @@ def compute_apls_metric(y_pred, y_true, snap_px=10):
     if pred_sum == 0:
         return {'apls': 0.0}
 
-    # for each image, compute APLS
     try:
         skel_gt = skeletonize(y_true)
         skel_pred = skeletonize(y_pred)
@@ -164,8 +185,8 @@ def compute_apls_metric(y_pred, y_true, snap_px=10):
         print(f"Skel: {e}")
         return {'apls': 0.0}
     try:
-        G_gt = skeleton_to_graph(skel_gt)
-        G_pred = skeleton_to_graph(skel_pred)
+        G_gt = skeleton_to_graph_sampled(skel_gt, sample_dist=5.0)
+        G_pred = skeleton_to_graph_sampled(skel_pred, sample_dist=5.0)
     except Exception as e:
         print(f"Skel2Graph: {e}")
         return {'apls': 0.0}
@@ -174,7 +195,7 @@ def compute_apls_metric(y_pred, y_true, snap_px=10):
         metric = APLSMetric(G_gt, G_pred, snap_buffer_meters=float(snap_px))
         score = metric.compute()
         
-        return {'apls': score['recall_gt_to_pred'], 'apls_precision': score['precision_pred_to_gt'], 'apls_f1': score['apls_f1']}
+        return {'apls': score['apls_f1'], 'apls_recall': score['recall'], 'apls_precision': score['precision']}
         
     except Exception as e:
         print(f"Erreur calcul APLS: {e}")

@@ -19,9 +19,9 @@ CONF = {
     'batchSize': 8,
     'numEpochs': 200,
     'iterPerEpoch': 100,
-    'learning_rate': 0.0001,
+    'learning_rate': 0.005,
     'dropout': 0.30,
-    'loss': 'cldice',
+    'loss': 'dice',
     'lambda1': 0.5,
     'lambda2': 0.5,
     'ckptDirRoot': 'modelWeights',
@@ -141,7 +141,7 @@ def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, model_
     
     # On ajoute les clés lourdes seulement si nécessaire pour ne pas polluer les logs avec des 0
     if do_heavy:
-        heavy_keys = ['apls']
+        heavy_keys = ['apls', 'apls_recall', 'apls_precision']
         for k in heavy_keys:
             metrics_sum[k] = []
     
@@ -157,11 +157,12 @@ def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, model_
 
     tasks = []
 
-    for img, gt in zip(data_val, gt_val):
-        img_input = (img.astype(np.float32) /
-                     255.0)[np.newaxis, :, :, np.newaxis]
+    do_heavy_img = do_heavy
+    for img, gt in zip(data_val, gt_val): # img is shape (H, W), gt is shape (H, W, 2)
+        img_input = (img.astype(np.float32) / 255.0)[np.newaxis, :, :, np.newaxis] # shape (1, H, W, 1)
 
         pred_prob = net.segment(img_input)
+            
         tasks.append((pred_prob.copy(), img.copy(), gt.copy(), conf, use_crf, do_heavy))
 
     keep_pred = None
@@ -169,7 +170,8 @@ def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, model_
 
     with concurrent.futures.ProcessPoolExecutor() as executor:
         results_list = list(tqdm.tqdm(executor.map(
-            process_single_validation_item, tasks), total=len(tasks), desc=f"Valid (Heavy={do_heavy})"))
+            process_single_validation_item, tasks), total=len(tasks), desc=f"Valid (Heavy={do_heavy_img})"))
+        
 
     for i, (res, p_mask, g_mask) in enumerate(results_list):
         if i == len(results_list) - 1:
@@ -256,10 +258,17 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
     current_conf['Model'] = model_name
     current_conf['l2'] = MODEL_L2.get(model_name, 1e-9)
 
-    ckpt_base_path = os.path.join(current_conf['ckptDirRoot'], model_name)
+    # --- CONFIGURATION DU SCHEDULER ---
+    current_lr = current_conf['learning_rate'] # LR dynamique
+    lr_patience = 10        # Nombre d'époques à attendre avant de réduire
+    lr_factor = 0.5         # Facteur de réduction (ex: on divise par 2)
+    lr_min = 1e-6           # Ne pas descendre en dessous de ça
+    lr_wait = 0             # Compteur d'attente
+    best_val_dice = float('-inf') # Meilleure dice vue jusqu'ici
+    # ----------------------------------
 
-    log_path_train = os.path.join(
-        current_conf['logDirRoot'], model_name, 'train')
+    ckpt_base_path = os.path.join(current_conf['ckptDirRoot'], model_name)
+    log_path_train = os.path.join(current_conf['logDirRoot'], model_name, 'train')
     log_path_val = os.path.join(current_conf['logDirRoot'], model_name, 'val')
 
     os.makedirs(ckpt_base_path, exist_ok=True)
@@ -275,16 +284,14 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
     with tf.compat.v1.Session(config=config_proto) as sess:
         net = RootNet(sess, current_conf, model_name, isTrain=True)
 
-        train_writer = tf.compat.v1.summary.FileWriter(
-            log_path_train, sess.graph)
+        train_writer = tf.compat.v1.summary.FileWriter(log_path_train, sess.graph)
         val_writer = tf.compat.v1.summary.FileWriter(log_path_val)
 
         global_step = 0
-        epoch_pbar = tqdm.tqdm(
-            range(current_conf['numEpochs']), desc="Epochs", unit="ep")
+        epoch_pbar = tqdm.tqdm(range(current_conf['numEpochs']), desc="Epochs", unit="ep")
 
         for epoch in epoch_pbar:
-            # check if already checkpoint for this epoch
+            # ... (Code existant de chargement de checkpoint inchangé) ...
             epoch_save_dir = os.path.join(ckpt_base_path, f"epoch_{epoch + 1}")
             checkpoint_exists = False
             if os.path.exists(epoch_save_dir):
@@ -292,13 +299,12 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
                     checkpoint_exists = True
 
             if checkpoint_exists:
-                tqdm.tqdm.write(
-                    f" -> Checkpoint for epoch {epoch+1} already exists. Loading model...")
+                tqdm.tqdm.write(f" -> Checkpoint for epoch {epoch+1} already exists. Loading model...")
                 net.restore(epoch_save_dir)
 
             epoch_loss = 0.0
-            batch_pbar = tqdm.tqdm(range(
-                current_conf['iterPerEpoch']), desc=f"Epoch {epoch+1}", leave=False)
+            batch_pbar = tqdm.tqdm(range(current_conf['iterPerEpoch']), desc=f"Epoch {epoch+1}", leave=False)
+            
             for _ in batch_pbar:
                 try:
                     batch_x, batch_y = batch_gen.queue.get(timeout=60)
@@ -307,41 +313,59 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
                     print("Erreur: Timeout lors de la récupération du batch.")
                     break
 
-                if False:  # checkpoint_exists:
-                    loss, _, _, _, _ = net.deploy(
-                        batch_x, batch_y, phase=False)
+                if checkpoint_exists:
+                    loss, _, _, _, _ = net.deploy(batch_x, batch_y, phase=False)
                     epoch_loss += loss
-
-                    train_writer.add_summary(make_summary(
-                        'batch_loss', loss), global_step)
+                    train_writer.add_summary(make_summary('batch_loss', loss), global_step)
                     global_step += 1
                     batch_pbar.set_postfix({'loss': f"{loss:.4f}"})
                 else:
-                    loss = net.fit(
-                        batch_x, batch_y, learning_rate=current_conf['learning_rate'], phase=True)
+                    # MODIFICATION ICI : Utiliser current_lr au lieu de la config statique
+                    loss = net.fit(batch_x, batch_y, learning_rate=current_lr, phase=True)
+                    
                     epoch_loss += loss
-
-                    train_writer.add_summary(make_summary(
-                        'batch_loss', loss), global_step)
+                    train_writer.add_summary(make_summary('batch_loss', loss), global_step)
                     global_step += 1
-                    batch_pbar.set_postfix({'loss': f"{loss:.4f}"})
+                    
+                    # On affiche le LR actuel dans la barre de progression pour suivi
+                    batch_pbar.set_postfix({'loss': f"{loss:.4f}", 'lr': f"{current_lr:.1e}"})
 
             avg_train_loss = epoch_loss / current_conf['iterPerEpoch']
-            train_writer.add_summary(make_summary(
-                'epoch_loss', avg_train_loss), epoch)
+            train_writer.add_summary(make_summary('epoch_loss', avg_train_loss), epoch)
+            # Logger le LR pour le suivre dans TensorBoard
+            train_writer.add_summary(make_summary('learning_rate', current_lr), epoch)
 
             epoch_dir = os.path.join(ckpt_base_path, f"epoch_{epoch+1}")
             os.makedirs(epoch_dir, exist_ok=True)
-            if False: # len(d_val) > 0:
-                
+            
+            if len(d_val) > 0:
                 do_heavy = ((epoch + 1) % HEAVY_METRICS_FREQ == 0) or ((epoch + 1) == current_conf['numEpochs'])
                 
-                metrics = evaluate_validation(
-                    sess, net, d_val, g_val, current_conf, val_writer, epoch, model_name, do_heavy)
-
+                # Evaluation
+                metrics = evaluate_validation(sess, net, d_val, g_val, current_conf, val_writer, epoch, model_name, do_heavy)
                 print(f"Metriques de validation à la fin de l'époque {epoch+1} : {metrics}")
+                
+                # --- LOGIQUE DU SCHEDULER ICI ---
+                if not checkpoint_exists: # Ne pas changer le LR si on vient de recharger un vieux checkpoint
+                    val_dice = metrics['dice'] # Ou metrics['dice'] si vous voulez maximiser le Dice (inverser la logique)
+                    
+                    # On cherche à maximiser le Dice (delta de 1e-4 pour éviter le bruit)
+                    if val_dice > (best_val_dice + 1e-4):
+                        best_val_dice = val_dice
+                        lr_wait = 0 # On reset le compteur car on s'est amélioré
+                    else:
+                        lr_wait += 1
+                        print(f" -> Validation loss ne s'améliore pas (Patience: {lr_wait}/{lr_patience})")
+                        
+                        if lr_wait >= lr_patience:
+                            old_lr = current_lr
+                            current_lr = max(current_lr * lr_factor, lr_min)
+                            lr_wait = 0 # Reset patience après réduction
+                            if current_lr < old_lr:
+                                print(f"⚠️ PLATEAU DÉTECTÉ : Réduction du Learning Rate de {old_lr:.1e} à {current_lr:.1e}")
+                # --------------------------------
 
-            epoch_pbar.set_postfix({'Train Loss': f"{avg_train_loss:.4f}"})
+            epoch_pbar.set_postfix({'Train Loss': f"{avg_train_loss:.4f}", 'Val Loss': f"{metrics.get('loss', 0):.4f}"})
 
             print(f" -> Sauvegarde modèle dans : {epoch_dir}")
             net.save(epoch_dir)
@@ -349,7 +373,6 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
             val_writer.flush()
 
     batch_gen.finish()
-
 
 def main():
     parser = argparse.ArgumentParser()

@@ -1,135 +1,110 @@
 import numpy as np
 import networkx as nx
-from skimage.morphology import skeletonize
-import matplotlib.pyplot as plt
-from apls import APLSMetric
 
-# ==========================================
-# 1. Remplacement de sknw (Version stable)
-# ==========================================
-def skeleton_to_graph(skeleton):
-    """
-    Convertit un squelette binaire en graphe NetworkX.
-    Version corrigée pour gérer les changements dynamiques de topologie (IndexError).
-    """
+def skeleton_to_graph_sampled(skeleton, sample_dist=10.0):
     pixels = np.column_stack(np.where(skeleton))
     G = nx.Graph()
     
     for r, c in pixels:
-        G.add_node((r, c))
+        G.add_node((r, c), y=r, x=c)
         
+    # Connexions (8-voisinage)
     for r, c in pixels:
         for dr in [-1, 0, 1]:
             for dc in [-1, 0, 1]:
                 if dr == 0 and dc == 0: continue
                 nr, nc = r + dr, c + dc
                 if (nr, nc) in G.nodes:
-                    dist = np.sqrt(dr**2 + dc**2)
-                    # On ajoute l'arête (NetworkX ignore les doublons dans Graph simple)
-                    G.add_edge((r, c), (nr, nc), length=dist)
+                    # On évite les doublons d'arêtes
+                    if not G.has_edge((r, c), (nr, nc)):
+                        dist = np.sqrt(dr**2 + dc**2)
+                        G.add_edge((r, c), (nr, nc), length=dist)
     
-    # 3. Simplification (retrait des nœuds de passage)
-    # On identifie les candidats initiaux
-    nodes_to_check = [n for n in G.nodes if G.degree(n) == 2]
+    G_simplified = G.copy()
     
-    for n in nodes_to_check:
-        if n not in G.nodes:
-            continue
-            
-        if G.degree(n) != 2:
-            continue
-            
-        neighbors = list(G.neighbors(n))
-        
-        if len(neighbors) != 2:
-            continue
-            
-        u, v = neighbors[0], neighbors[1]
-        
-        if u == v:
-            continue
-            
-        w1 = G[u][n]['length']
-        w2 = G[n][v]['length']
-        
-        if G.has_edge(u, v):
-            G[u][v]['length'] += w1 + w2
-        else:
-            G.add_edge(u, v, length=w1 + w2)
-            
-        G.remove_node(n)
-        
-    for node in G.nodes:
-        r, c = node
-        G.nodes[node]['y'] = r
-        G.nodes[node]['x'] = c
-            
-    return G
+    key_nodes = [n for n in G.nodes if G.degree(n) != 2]
+    
+    # if there are no 2-degree nodes, pick an arbitrary node to start
+    if not key_nodes and len(G.nodes) > 0:
+        key_nodes = [list(G.nodes)[0]]
 
-def mask_to_graph(binary_mask):
-    # 1. Squelettisation
-    skeleton = skeletonize(binary_mask.astype(bool))
-    
-    # 2. Conversion avec notre nouvelle fonction (plus de sknw)
-    G = skeleton_to_graph(skeleton)
-    
-    return G
+    visited_edges = set()
 
-# ==========================================
-# NOUVELLE FONCTION : Augmentation du graphe
-# ==========================================
-def inject_midpoints(G, interval_pixels):
-    """
-    Injecte des nœuds intermédiaires le long des arêtes trop longues.
-    C'est CRUCIAL pour l'APLS sur des segmentations discontinues.
-    """
-    G_aug = G.copy()
-    edges_to_remove = []
-    edges_to_add = []
-    
-    # On itère sur toutes les arêtes existantes
-    for u, v, data in G.edges(data=True):
-        length = data.get('length', 0)
-        
-        # Si l'arête est plus longue que l'intervalle, on la découpe
-        if length > interval_pixels:
-            edges_to_remove.append((u, v))
+    for start_node in key_nodes: 
+        # for each neighbor of the start_node
+        for neighbor in list(G.neighbors(start_node)):
             
-            # Récupérer positions
-            p_u = np.array([G.nodes[u]['y'], G.nodes[u]['x']])
-            p_v = np.array([G.nodes[v]['y'], G.nodes[v]['x']])
+            if tuple(sorted((start_node, neighbor))) in visited_edges:
+                continue
             
-            # Combien de segments ?
-            num_segments = int(np.ceil(length / interval_pixels))
+            path = [start_node, neighbor] # 'path' will contain the entire line pixel by pixel: [IntersectionA, p1, p2, ..., pN, IntersectionB]
+            visited_edges.add(tuple(sorted((start_node, neighbor))))
             
-            # Création des points intermédiaires
-            prev_node = u
-            for i in range(1, num_segments):
-                # Interpolation linéaire (t varie de 0 à 1)
-                t = i / num_segments
-                new_pos = p_u + t * (p_v - p_u)
+            curr = neighbor
+            prev = start_node
+            
+            # While we are on a "line" (degree 2), we move forward
+            while G.degree(curr) == 2:
+                nbrs = list(G.neighbors(curr))
+                # Find the next node (the one that is not where we came from)
+                next_node = nbrs[0] if nbrs[0] != prev else nbrs[1]
                 
-                # Créer un ID unique pour le nouveau nœud (tuple float)
-                new_node_id = (new_pos[0], new_pos[1])
+                if next_node == start_node: # Closed loop on itself
+                    path.append(next_node) 
+                    break
                 
-                # Ajouter le nœud avec ses attributs
-                G_aug.add_node(new_node_id, y=new_pos[0], x=new_pos[1])
+                path.append(next_node)
+                visited_edges.add(tuple(sorted((curr, next_node))))
                 
-                # Calculer la distance du petit segment
-                seg_len = np.linalg.norm(new_pos - np.array([G_aug.nodes[prev_node]['y'], G_aug.nodes[prev_node]['x']]))
+                prev = curr
+                curr = next_node
                 
-                # Ajouter l'arête
-                edges_to_add.append((prev_node, new_node_id, seg_len))
-                prev_node = new_node_id
-            
-            # Connecter le dernier point intermédiaire au nœud final v
-            last_seg_len = np.linalg.norm(p_v - np.array([G_aug.nodes[prev_node]['y'], G_aug.nodes[prev_node]['x']]))
-            edges_to_add.append((prev_node, v, last_seg_len))
-            
-    # Appliquer les modifications
-    G_aug.remove_edges_from(edges_to_remove)
-    for u, v, l in edges_to_add:
-        G_aug.add_edge(u, v, length=l)
-        
-    return G_aug
+                if curr in key_nodes: # We have reached another intersection
+                    break
 
+            if len(path) <= 3:
+                continue
+                
+            cumul_dist = 0
+            last_kept_idx = 0
+            
+            for i in range(len(path)-1):
+                if G_simplified.has_edge(path[i], path[i+1]):
+                    G_simplified.remove_edge(path[i], path[i+1])
+            
+            for i in range(1, len(path)-1):
+                G_simplified.remove_node(path[i])
+
+            # Reconnect by skipping nodes
+            for i in range(1, len(path)):
+                u, v = path[i-1], path[i]
+
+                step_dist = G[u][v]['length'] 
+                cumul_dist += step_dist
+                
+                if cumul_dist >= sample_dist and i < len(path)-1:
+                    node_to_keep = path[i]
+                    prev_node_kept = path[last_kept_idx]
+                    
+                    G_simplified.add_node(node_to_keep, y=node_to_keep[0], x=node_to_keep[1])
+                    G_simplified.add_edge(prev_node_kept, node_to_keep, length=cumul_dist)
+                    
+                    # Reset
+                    cumul_dist = 0
+                    last_kept_idx = i
+            
+            # Connect the last segment
+            end_node = path[-1]
+            prev_node_kept = path[last_kept_idx]
+            G_simplified.add_edge(prev_node_kept, end_node, length=cumul_dist)
+
+    # import matplotlib.pyplot as plt  
+    # pos0 = {n: (n[1], -n[0]) for n in G.nodes} # x, -y for image display
+    # pos1 = {n: (n[1], -n[0]) for n in G_simplified.nodes} # x, -y for image display
+    # plt.figure()
+    # nx.draw(G, pos0, node_size=5, node_color='blue', edge_color='lightgray', with_labels=False)
+    # nx.draw(G_simplified, pos1, node_size=15, node_color='green', edge_color='orange', with_labels=False)
+    # plt.axis('equal')
+    # plt.show()
+    return G_simplified
+    
