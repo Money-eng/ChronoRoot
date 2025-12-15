@@ -14,7 +14,6 @@ def compute_advanced_metrics(pred_mask, gt_mask, do_heavy):
     Fonction principale assemblant toutes les sous-métriques.
     Argument 'debug=True' pour afficher les étapes.
     """
-    # Conversion booléenne une seule fois
     y_pred = pred_mask.astype(bool)
     y_true = gt_mask.astype(bool)
 
@@ -26,12 +25,10 @@ def compute_advanced_metrics(pred_mask, gt_mask, do_heavy):
     true_sum = np.count_nonzero(y_true)
     if pred_sum > 0 and true_sum > 0:
         try:
-            # Calcul des distances surface à surface
             surface_distances = sd_metrics.compute_surface_distances(
                 y_true, y_pred, spacing_mm=(0.0487, 0.0487)
             )
             
-            # Hausdorff 95% et 100% (Max)
             results['hausdorff_95'] = sd_metrics.compute_robust_hausdorff(surface_distances, 95)
             results['hausdorff_max'] = sd_metrics.compute_robust_hausdorff(surface_distances, 100)
             
@@ -44,7 +41,6 @@ def compute_advanced_metrics(pred_mask, gt_mask, do_heavy):
             results['hausdorff_max'] = -1.0
             results['surface_dice_1mm'] = -1.0
     else:
-        # Pénalités si un masque est vide
         val = 0.0 if (pred_sum == 0 and true_sum == 0) else float('inf')
         results['hausdorff_95'] = val
         results['hausdorff_max'] = val
@@ -59,23 +55,31 @@ def compute_advanced_metrics(pred_mask, gt_mask, do_heavy):
         # for each connected component in y_true, extract the none zero pixels from y_pred and y_true
         # and compute APLS for each component, then average the results 
         
-        apls_result = compute_apls_metric(y_pred, y_true, snap_px=5)
+        # apls_result = compute_apls_metric(y_pred, y_true, snap_px=5)
         
-        # On intègre directement les résultats globaux
-        results['apls'] = float(apls_result['apls'])
+        # # # On intègre directement les résultats globaux
+        # results['apls'] = float(apls_result['apls'])
+        # results['apls_recall'] = float(apls_result['apls_recall'])
+        # results['apls_precision'] = float(apls_result['apls_precision'])
         
-        # labeled_true = label(y_true, connectivity=2)
-        # apls_scores = []
-        # for region in regionprops(labeled_true):
-        #     minr, minc, maxr, maxc = region.bbox
-        #     y_true_cc = (labeled_true[minr:maxr, minc:maxc] == region.label)
-        #     y_pred_cc = y_pred[minr:maxr, minc:maxc]
-        #     apls_result = compute_apls_metric(y_pred_cc, y_true_cc, snap_px=20)
-        #     apls_scores.append(float(apls_result['apls']))
+        labeled_true = label(y_true, connectivity=2)
+        apls_scores = []
+        apls_recalls = []
+        apls_precisions = []
+        for region in regionprops(labeled_true):
+            minr, minc, maxr, maxc = region.bbox
+            y_true_cc = (labeled_true[minr:maxr, minc:maxc] == region.label)
+            y_pred_cc = y_pred[minr:maxr, minc:maxc]
+            apls_result = compute_apls_metric(y_pred_cc, y_true_cc, snap_px=5)
+            apls_scores.append(float(apls_result['apls']))
+            apls_recalls.append(float(apls_result['apls_recall']))
+            apls_precisions.append(float(apls_result['apls_precision']))
         
-        # results.update({
-        #     'apls': float(np.mean(apls_scores)) if len(apls_scores) > 0 else 0.0
-        # })  
+        results.update({
+            'apls': float(np.mean(apls_scores)) if len(apls_scores) > 0 else 0.0,
+            'apls_recall': float(np.mean(apls_recalls)) if len(apls_recalls) > 0 else 0.0,
+            'apls_precision': float(np.mean(apls_precisions)) if len(apls_precisions) > 0 else 0.0
+        })  
 
     return results
    
@@ -161,42 +165,56 @@ def compute_topology_metrics(y_pred, y_true):
         'b1_pred': b1_pred
     }
     
-def compute_apls_metric(y_pred, y_true, snap_px=10):
-    
+def compute_apls_metric(y_pred, y_true, snap_px=4):
     
     pred_sum = np.count_nonzero(y_pred)
     true_sum = np.count_nonzero(y_true)
     
     if true_sum == 0:
-        return {'apls': 1.0 if pred_sum == 0 else 0.0}
+        val = 1.0 if pred_sum == 0 else 0.0
+        return {'apls': val, 'apls_recall': val, 'apls_precision': val}
+    
     if pred_sum == 0:
-        return {'apls': 0.0}
+        return {'apls': 0.0, 'apls_recall': 0.0, 'apls_precision': 0.0}
 
     try:
+        if not y_true.flags['C_CONTIGUOUS']: y_true = np.ascontiguousarray(y_true)
+        if not y_pred.flags['C_CONTIGUOUS']: y_pred = np.ascontiguousarray(y_pred)
+
         skel_gt = skeletonize(y_true)
         skel_pred = skeletonize(y_pred)
         
-        # if skeleton is empty, return 0.0
         if np.count_nonzero(skel_gt) == 0:
-            return {'apls': 0.0}
+            return {'apls': 0.0, 'apls_recall': 0.0, 'apls_precision': 0.0}
         if np.count_nonzero(skel_pred) == 0:
-            return {'apls': 0.0}
+            return {'apls': 0.0, 'apls_recall': 0.0, 'apls_precision': 0.0}
+            
     except Exception as e:
-        print(f"Skel: {e}")
-        return {'apls': 0.0}
-    try:
-        G_gt = skeleton_to_graph_sampled(skel_gt, sample_dist=5.0)
-        G_pred = skeleton_to_graph_sampled(skel_pred, sample_dist=5.0)
-    except Exception as e:
-        print(f"Skel2Graph: {e}")
-        return {'apls': 0.0}
+        print(f"Skel error: {e}")
+        return {'apls': 0.0, 'apls_recall': 0.0, 'apls_precision': 0.0}
 
     try:
-        metric = APLSMetric(G_gt, G_pred, snap_buffer_meters=float(snap_px))
+        G_gt = skeleton_to_graph_sampled(skel_gt, sample_dist=20.0)
+        G_pred = skeleton_to_graph_sampled(skel_pred, sample_dist=20.0)
+    except Exception as e:
+        print(f"Skel2Graph error: {e}")
+        return {'apls': 0.0, 'apls_recall': 0.0, 'apls_precision': 0.0}
+
+    try:
+        MAX_APLS_TIME = 60 * 10 
+        metric = APLSMetric(G_gt, G_pred, snap_buffer_meters=float(snap_px), max_time=None)
         score = metric.compute()
         
-        return {'apls': score['apls_f1'], 'apls_recall': score['recall'], 'apls_precision': score['precision']}
+        return {
+            'apls': score['f1'], 
+            'apls_recall': score['recall'], 
+            'apls_precision': score['precision']
+        }
+    
+    except TimeoutError:
+        print(f"⚠️ APLS calculation timed out after {MAX_APLS_TIME}s. Skipping.")
+        return {'apls': -1.0, 'apls_recall': -1.0, 'apls_precision': -1.0}
         
     except Exception as e:
         print(f"Erreur calcul APLS: {e}")
-        return {'apls': 0.0}
+        return {'apls': 0.0, 'apls_recall': 0.0, 'apls_precision': 0.0}

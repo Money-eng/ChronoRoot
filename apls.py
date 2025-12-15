@@ -1,12 +1,16 @@
 import networkx as nx
 import numpy as np
 from scipy.spatial import KDTree
+import time
+import tqdm 
 
 class APLSMetric:
-    def __init__(self, G_ground_truth, G_prediction, snap_buffer_meters=4.0):
+    def __init__(self, G_ground_truth, G_prediction, snap_buffer_meters=4.0, max_time=None):
         self.G_gt = G_ground_truth
         self.G_pred = G_prediction
         self.snap_buffer = snap_buffer_meters 
+        self.max_time = max_time  # AJOUT: Temps max en secondes
+        self.start_time = None
 
     def _get_node_positions(self, G):
         nodes = list(G.nodes())
@@ -28,13 +32,22 @@ class APLSMetric:
         paths_count = 0
         sum_differences = 0.0
         nodes_of_interest = source_nodes 
-
-        import tqdm 
+        
         for i, u_src in enumerate(tqdm.tqdm(nodes_of_interest)):
+            
+            if self.max_time is not None and self.start_time is not None:
+                if (time.time() - self.start_time) > self.max_time:
+                    raise TimeoutError(f"APLS calculation exceeded {self.max_time} seconds")
+            
             dist_u, idx_u = tree.query(source_coords[i])  # Query nearest neighbor in target
             u_tgt = target_nodes[idx_u] if dist_u <= self.snap_buffer else None # if within snap buffer else None
 
             for j, v_src in enumerate(nodes_of_interest):
+                if self.max_time is not None and self.start_time is not None:
+                     # On vérifie moins souvent ici (toutes les 100 itérations internes) pour ne pas tuer la perf
+                    if j % 100 == 0 and (time.time() - self.start_time) > self.max_time:
+                        raise TimeoutError(f"APLS calculation exceeded {self.max_time} seconds")
+                
                 if i >= j: continue 
                 
                 dist_v, idx_v = tree.query(source_coords[j]) # Query nearest neighbor in target
@@ -62,6 +75,7 @@ class APLSMetric:
         return 1 - (sum_differences / paths_count) # APLS score
     
     def compute(self):
+        self.start_time = time.time()
         recall = self._calculate_single_direction_apls(self.G_gt, self.G_pred)
         precision = self._calculate_single_direction_apls(self.G_pred, self.G_gt)
         if recall + precision == 0: f1 = 0.0
