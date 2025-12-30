@@ -218,7 +218,7 @@ if __name__ == "__main__":
     conf = {**conf1, **conf2}
     
     parser = argparse.ArgumentParser()
-    parser.add_argument('--use_crf', action='store_true', default=False, help='no CRF post-processing')
+    parser.add_argument('--use_crf', action='store_true', default=True, help='no CRF post-processing')
     parser.add_argument('--output_dir', type=str, help='Output directory', nargs="?")
     parser.add_argument('input_dir', type=str, help='Input directory', nargs="?")
 

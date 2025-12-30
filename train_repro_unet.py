@@ -141,7 +141,7 @@ def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, model_
             pred_prob = net.segment(img_input)
             
             future = executor.submit(process_single_validation_item, 
-                                     (pred_prob.copy(), img.copy(), gt.copy(), conf, use_crf, do_heavy))
+                                     (pred_prob.copy(), img.copy(), gt.copy(), conf, use_crf, False))
             futures_list.append(future)
             
             if i == len(data_val) - 1:

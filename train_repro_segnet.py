@@ -135,14 +135,6 @@ def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, model_
         val_imgs_arr = np.pad(val_imgs_arr, ((0,0), (0, pad_h), (0, pad_w), (0,0)), mode='constant')
         val_gts_arr = np.pad(val_gts_arr, ((0,0), (0, pad_h), (0, pad_w), (0,0)), mode='constant')
     
-    loss, diceg, aucg, precg, recg = net.deploy(val_imgs_arr, val_gts_arr, phase=0) 
-    
-    metrics_sum['loss'].append(loss)
-    metrics_sum['dice_gpu'].append(diceg)
-    metrics_sum['auc_gpu'].append(aucg)
-    metrics_sum['precision_gpu'].append(precg)
-    metrics_sum['recall_gpu'].append(recg)
-    
     futures_list = []
     last_processed_pred = None
     last_processed_gt = None
@@ -165,9 +157,11 @@ def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, model_
             pred_prob_padded = net.segment(img_input)
             
             pred_prob = pred_prob_padded[:, :h, :w, :]
+            img_crop = img[:h, :w, :]
+            gt_crop = gt[:h, :w, :]
             future = executor.submit(
                 process_single_validation_item, 
-                (pred_prob.copy(), img.copy(), gt.copy(), conf, use_crf, do_heavy)
+                (pred_prob.copy(), img_crop.copy(), gt_crop.copy(), conf, use_crf, False)
             )
             futures_list.append(future)
 

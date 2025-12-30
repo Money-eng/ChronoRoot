@@ -398,8 +398,8 @@ class DataProvider(BaseDataProvider):
                 name = name[1:]
             
             names.append([name])
-            
-            train_data = padImgToMakeItMultipleOf(train_data)
+            if self.pad:
+                train_data = padImgToMakeItMultipleOf(train_data, [32,32])
             X[i,:,:,0] = train_data
     
         return X, names
