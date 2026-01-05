@@ -317,19 +317,24 @@ if __name__ == "__main__":
                 weights_path = os.path.join('modelWeights', model_name, epoch_name)
                 
                 if os.path.exists(weights_path): 
-                    # L'appel à Segment inclut maintenant le skip automatique
                     Segment(conf, current_input_dir, model_sub_out_dir, checkpoint_path=weights_path)
                 else:
                     pass
             
-            # L'appel à ensembleModels inclut maintenant le skip automatique
             ensembleModels(conf, current_input_dir, epoch_output_root, use_crf, available_models, sub_folder=sub)
             
-        print(f"      [Nettoyage] Suppression des résultats intermédiaires pour {epoch_name}...")
+            for model_name in available_models:
+                folder_to_delete = os.path.join(epoch_output_root, model_name, sub)
+                if os.path.exists(folder_to_delete):
+                    try:
+                        shutil.rmtree(folder_to_delete)
+                    except Exception as e:
+                        print(f"      [Erreur Delete] {folder_to_delete} : {e}")
+            
         for model_name in available_models:
-            folder_to_delete = os.path.join(epoch_output_root, model_name)
-            if os.path.exists(folder_to_delete):
+            parent_folder = os.path.join(epoch_output_root, model_name)
+            if os.path.exists(parent_folder):
                 try:
-                    shutil.rmtree(folder_to_delete)
+                    shutil.rmtree(parent_folder)
                 except Exception as e:
-                    print(f"      [Erreur] Impossible de supprimer {folder_to_delete} : {e}")
+                    pass

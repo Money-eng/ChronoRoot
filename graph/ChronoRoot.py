@@ -16,6 +16,7 @@ from .rsmlFunc import createTree
 from .graphPostProcess import trimGraph
 from .dataWork import dataWork
 
+cv2.setNumThreads(0)
 DEBUG = False
 
 def getImgName(image, conf):
@@ -46,6 +47,7 @@ def PrepareAnalyzer(conf):
     img_path = conf['Path']
     seg_path = conf['SegPath']
     save_path = conf['Project']
+    save_path = os.path.abspath(save_path)
 
     img_name = img_path.split('/')[-1]
     seg_path = os.path.join(seg_path, img_name)
@@ -53,18 +55,26 @@ def PrepareAnalyzer(conf):
     os.makedirs(save_path, exist_ok=True)
     
     csv_path = os.path.join(img_path, 'seed_and_roi.csv')
-    # load csv
-    seed_and_roi = pd.read_csv(csv_path)
-    
-    epoch_folders = [f for f in os.listdir(seg_path) if os.path.isdir(os.path.join(seg_path, f))] # "path/epoch_number"
+    try:
+        seed_and_roi = pd.read_csv(csv_path)
+    except FileNotFoundError:
+        print(f"Cannot find the seed and ROI file at {csv_path}. Please check the path and try again.")
+        return
+
+    epoch_folders = [f for f in os.listdir(seg_path) if os.path.isdir(os.path.join(seg_path, f))]
     epoch_folders = sorted(epoch_folders, key=lambda x: int(x[6:]), reverse=True)
+    
+    tasks = []
+    skipped_count = 0
+    print("Preparing tasks for analysis...")
+    
     for epoch in epoch_folders:
         epoch_path = os.path.join(seg_path, epoch)
         save_epoch_path = os.path.join(save_path, epoch)
         os.makedirs(save_epoch_path, exist_ok=True)
         
-        # list directory in img_path
         img_folders = [f for f in os.listdir(img_path) if os.path.isdir(os.path.join(img_path, f))] 
+        
         for img_folder in img_folders:
             folder_num = int(img_folder)
             seg_path_folder = os.path.join(epoch_path, "EnsembleResult", img_folder)
@@ -72,29 +82,61 @@ def PrepareAnalyzer(conf):
             save_path_folder = os.path.join(save_epoch_path, img_folder)
             os.makedirs(save_path_folder, exist_ok=True)
             
-            # get column box in csv and select rows with folder number
             box_row = seed_and_roi[seed_and_roi['Box'] == folder_num]
             if box_row.empty:
-                print(f"No box found for folder {img_folder} in epoch {epoch}")
                 continue
+                
             for _, row in box_row.iterrows():
-                # get "plant_name" column
                 plant_name = row['PlantName']
                 save_path_plant = os.path.join(save_path_folder, plant_name)
-                conf['Project'] = save_path_plant
+
+                
+                result_file = os.path.join(save_path_plant, "Results.csv")
+                
+                if os.path.exists(save_path_plant) and os.path.exists(result_file):
+                    skipped_count += 1
+                    continue
+                
                 seed_pos = (row['seed_x'], row['seed_y'])
                 roi_bbox = (row['y_min'], row['y_max'], row['x_min'], row['x_max'])
-                # change seed coordinates to relative to roi
                 seed_pos_rel = [seed_pos[0] - roi_bbox[2], seed_pos[1] - roi_bbox[0]]
                 
                 ext = "*" + conf["FileExt"]
+                
                 all_files = loadPath(img_path_folder, ext)
                 images = [file for file in all_files]
                 
                 all_seg_files = loadPath(seg_path_folder, ext)
                 segFiles = [file for file in all_seg_files]
-                ChronoRootAnalyzer(conf, images, segFiles, seed_pos_rel, np.array(roi_bbox))
                 
+                if len(images) > 0 and len(segFiles) > 0:
+                    task_args = (
+                        conf, 
+                        images, 
+                        segFiles, 
+                        seed_pos_rel, 
+                        np.array(roi_bbox), 
+                        save_path_plant
+                    )
+                    tasks.append(task_args)
+
+    print(f"Résumé : {skipped_count} plantes déjà traitées (ignorées).")
+    
+    max_workers = max(1, multiprocessing.cpu_count() - 1)
+    
+    if len(tasks) == 0:
+        print("Aucune nouvelle tâche à traiter.")
+        return
+
+    print(f"Lancement de {len(tasks)} tâches restantes sur {max_workers} processus...")
+
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        results = list(executor.map(process_plant_task, tasks))
+    
+    print("Traitement terminé.")
+    for res in results:
+        if "Error" in res:
+            print(res)        
 
 def ChronoRootAnalyzer(conf, images, segFiles, seed, bbox):
     lim = conf['Limit'] 
@@ -125,7 +167,6 @@ def ChronoRootAnalyzer(conf, images, segFiles, seed, bbox):
     metadata['segFolder'] = conf['SegPath']
     metadata['info'] = conf['fileKey']
 
-    print(metadata)
     metapath = os.path.join(saveFolder, 'metadata.json')
 
     with open(metapath, 'w') as fp:
@@ -133,17 +174,17 @@ def ChronoRootAnalyzer(conf, images, segFiles, seed, bbox):
 
     start = 0
     N = len(images)
-    pfile = os.path.join(saveFolder, "Results.csv") # For CSV Saver
+    pfile = os.path.join(saveFolder, "Results.csv") 
     
     with open(pfile, 'w+') as csv_file:
         csv_writer = csv.writer(csv_file)
-        row0 = ['FileName', 'TimeStep','MainRootLength','LateralRootsLength','NumberOfLateralRoots','TotalLength']
+        row0 = ['FileName', 'TimeStep','MainRootLength','LateralRootsLength',
+            'NumberOfLateralRoots','TotalLength', 
+            'TotalOrganCount', 'ConvexHullArea', 'RootDensity']
         csv_writer.writerow(row0)
         
-        ### First, it begins by obtaining the first segmentation
-
         for i in range(0, N):
-            print('TimeStep', i+1, 'of', N)
+            # print('TimeStep', i+1, 'of', N) 
             segFile = segFiles[i]
             seg, segFound = getCleanSeg(segFile, bbox, originalSeed, originalSeed)
             
@@ -193,10 +234,10 @@ def ChronoRootAnalyzer(conf, images, segFiles, seed, bbox):
             if flag1:
                 ske, bnodes, enodes, flag2 = getCleanSke(seg)
                 if not flag2:
-                    print("Error in the skeleton")
+                    print(f"Error in the skeletonization at time step {i} for image {images[i]} in segmentation, plant {getImgName(images[i], conf)}")
                     errorFlag_ = True
             else:
-                print("Error in the segmentation")
+                print(f"Error in the segmentation at time step {i} for image {images[i]}, plant {getImgName(images[i], conf)}")
                 errorFlag_ = True
             
             trackError = False
@@ -211,7 +252,7 @@ def ChronoRootAnalyzer(conf, images, segFiles, seed, bbox):
                         ske =  ske_.copy()
                         ske2 = ske2_.copy()
                     except:
-                        print("Error on node tracking")
+                        print(f"Error on node tracking at time step {i} for image {images[i]}, plant {getImgName(images[i], conf)}")
                         trackError = True
                 else:
                     grafo = graphInit(grafo2)

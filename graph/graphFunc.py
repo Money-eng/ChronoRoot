@@ -18,6 +18,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import numpy as np
 import graph_tool.all as gt
+from scipy.spatial import ConvexHull, QhullError
 
 c = 3
 
@@ -164,7 +165,6 @@ def saveGraph(grafo, path):
         print('Not valid graph')
     return
 
-
 def saveProps(image, it, grafo, csv_writer, number_lateral_roots):
     if grafo is not False:
         g, pos, weight, clase, nodetype, age = grafo
@@ -180,9 +180,32 @@ def saveProps(image, it, grafo, csv_writer, number_lateral_roots):
             else:
                 sec_root_len += weight[i]
         
-        row = [image, it, main_root_len, sec_root_len, number_lateral_roots, tot_len]
+        organ_count = 0
+        points = []
+        for v in g.vertices():
+            p = pos[v]
+            points.append([p[0], p[1]])
+            
+            t = nodetype[v]
+            if t == "FTip" or t == "LTip":
+                organ_count += 1
+        
+        points = np.array(points)
+        hull_area = 0.0
+        if len(points) >= 3: 
+            try:
+                hull = ConvexHull(points)
+                hull_area = hull.volume
+            except QhullError:
+                hull_area = 0.0
+        
+        root_density = 0.0
+        if hull_area > 0:
+            root_density = tot_len / hull_area
+
+        row = [image, it, main_root_len, sec_root_len, number_lateral_roots, tot_len, organ_count, hull_area, root_density]
     else:
-        row = [image, it, 0, 0, 0, 0]
+        row = [image, it, 0, 0, 0, 0, 0, 0, 0.0]
         
     csv_writer.writerow(row)
     return

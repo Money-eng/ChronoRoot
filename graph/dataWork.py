@@ -176,6 +176,23 @@ def dataWork(conf, pfile, folder, N_exp = None):
     totalRootsLengthPooled = mainRootPooled2 + lateralRootsPooled2
     totalRootsGrad = np.gradient(totalRootsLengthPooled, edge_order = 2)
     #totalRootsGrad = signal.medfilt(totalRootsGrad, 5)
+    totalRootsAccel = None
+    mainRootAccel = None
+    lateralRootsAccel = None
+    try:
+        totalRootsAccel = np.gradient(totalRootsGrad, edge_order = 2)
+    except:
+        totalRootsAccel = np.zeros(totalRootsGrad.shape)
+        
+    try:
+        mainRootAccel = np.gradient(mainRootGrad, edge_order = 2)
+    except:
+        mainRootAccel = np.zeros(mainRootGrad.shape)
+        
+    try:
+        lateralRootsAccel = np.gradient(lateralRootsGrad, edge_order = 2)
+    except:
+        lateralRootsAccel = np.zeros(lateralRootsGrad.shape)
     
     aporte_al_total = mainRootPooled2 / totalRootsLengthPooled * 100
     where_are_NaNs = np.isnan(aporte_al_total)
@@ -203,6 +220,9 @@ def dataWork(conf, pfile, folder, N_exp = None):
                                     'mainRootGrad': mainRootGrad,
                                     'lateralRootsGrad': lateralRootsGrad,
                                     'totalRootsGrad': totalRootsGrad,
+                                    'mainRootAccel': mainRootAccel,
+                                    'lateralRootsAccel': lateralRootsAccel,
+                                    'totalRootsAccel': totalRootsAccel,
                                     'NumberOfLateralRoots': numlateralRootsPooled2,
                                     'newDay' : v2,
                                     'mainOverTotal' : aporte_al_total,
