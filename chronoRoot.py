@@ -48,5 +48,7 @@ if __name__ == "__main__":
         pass
     else:
         conf['SegPath'] = args.segpath
+    
+    conf.pop('__builtins__', None)
 
     PrepareAnalyzer(conf)

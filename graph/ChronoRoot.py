@@ -5,8 +5,10 @@ import numpy as np
 import json
 import pandas as pd
 import copy
-from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
+import subprocess
+import shutil
+from concurrent.futures import ProcessPoolExecutor
 
 from .fileFunc import createResultFolder, loadPath
 from .imageFunc import getCleanSeg, getCleanSke, savePlotImages, saveEmpty
@@ -34,7 +36,23 @@ def process_plant_task(args):
     
     try:
         ChronoRootAnalyzer(local_conf, images, segFiles, seed_pos_rel, roi_bbox)
-        return f"Success: {save_path_plant}"
+        
+        archive_name = f"{save_path_plant}.tar.gz"
+        
+        parent_dir = os.path.dirname(save_path_plant)
+        folder_name = os.path.basename(save_path_plant)
+        
+        subprocess.run(
+            ["tar", "-czf", archive_name, "-C", parent_dir, folder_name], 
+            check=True
+        )
+        
+        shutil.rmtree(save_path_plant)
+        
+        return f"Success & Archived: {archive_name}"
+
+    except subprocess.CalledProcessError as e:
+        return f"Error archiving {save_path_plant}: {str(e)}"
     except Exception as e:
         return f"Error processing {save_path_plant}: {str(e)}"
 
@@ -49,8 +67,9 @@ def PrepareAnalyzer(conf):
     save_path = conf['Project']
     save_path = os.path.abspath(save_path)
 
-    img_name = img_path.split('/')[-1]
-    seg_path = os.path.join(seg_path, img_name)
+    #img_name = img_path.split('/')[-1]
+    seg_path = os.path.abspath(seg_path) # os.path.join(seg_path, img_name)
+    print("Segmentation path:", seg_path)
 
     os.makedirs(save_path, exist_ok=True)
     
@@ -121,16 +140,19 @@ def PrepareAnalyzer(conf):
                     tasks.append(task_args)
 
     print(f"Résumé : {skipped_count} plantes déjà traitées (ignorées).")
-    
-    max_workers = max(1, multiprocessing.cpu_count() - 1)
-    
-    if len(tasks) == 0:
-        print("Aucune nouvelle tâche à traiter.")
-        return
 
-    print(f"Lancement de {len(tasks)} tâches restantes sur {max_workers} processus...")
+    slurm_cpus = os.environ.get('SLURM_CPUS_PER_TASK')
+    if slurm_cpus:
+        max_workers = min(int(slurm_cpus), 192)
+    else:
+        max_workers = 20
+        
+    print(f"Configuration : Utilisation de {max_workers} travailleurs.")
 
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+    
+    ctx = multiprocessing.get_context('spawn')
+
+    with ProcessPoolExecutor(max_workers=max_workers, mp_context=ctx) as executor:
         results = list(executor.map(process_plant_task, tasks))
     
     print("Traitement terminé.")
@@ -147,16 +169,16 @@ def ChronoRootAnalyzer(conf, images, segFiles, seed, bbox):
     
     originalSeed = seed.copy()
     
-    # plot box on last image for verification + seed point
-    if DEBUG:
-        import matplotlib.pyplot as plt
-        last_image = cv2.imread(images[-1])
-        boxed_image = last_image[bbox[0]:bbox[1], bbox[2]:bbox[3]].copy()
-        plt.imshow(cv2.cvtColor(boxed_image, cv2.COLOR_BGR2RGB))
-        plt.scatter(seed[0], seed[1], c='red', s=50, label='Seed Point')
-        plt.title('ROI with Seed Point')
-        plt.legend()
-        plt.show()
+    # # plot box on last image for verification + seed point
+    # if DEBUG:
+    #     import matplotlib.pyplot as plt
+    #     last_image = cv2.imread(images[-1])
+    #     boxed_image = last_image[bbox[0]:bbox[1], bbox[2]:bbox[3]].copy()
+    #     plt.imshow(cv2.cvtColor(boxed_image, cv2.COLOR_BGR2RGB))
+    #     plt.scatter(seed[0], seed[1], c='red', s=50, label='Seed Point')
+    #     plt.title('ROI with Seed Point')
+    #     plt.legend()
+    #     plt.show()
     
     saveFolder, graphsPath, imagePath, rsmlPath = createResultFolder(conf)
     

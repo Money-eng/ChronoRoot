@@ -118,7 +118,11 @@ def saveEmpty(name, folder, original, seg):
     return
 
 def getCleanSeg(segFile, bbox, seed, originalSeed):
-    seg = cv2.imread(segFile, 0)[bbox[0]:bbox[1],bbox[2]:bbox[3]]
+    try:
+        seg = cv2.imread(segFile, 0)[bbox[0]:bbox[1],bbox[2]:bbox[3]]
+    except:
+        print(f"\tATTENTION: Impossible de lire le fichier de segmentation: {segFile}")
+        seg = np.zeros((bbox[1]-bbox[0], bbox[3]-bbox[2]), dtype='uint8')
     
     seg[0:originalSeed[1],:] = 0
 

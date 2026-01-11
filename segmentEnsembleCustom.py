@@ -1,8 +1,3 @@
-"""
-ChronoRoot: High-throughput phenotyping by deep learning 
-(Optimisé : Float64 + Skip intelligent si les dossiers sont complets)
-"""
-
 import tensorflow as tf
 import os
 import numpy as np
@@ -13,17 +8,17 @@ import pydensecrf.densecrf as dcrf
 import shutil
 import re
 import pathlib
+import multiprocessing as mp
 from tensorflow.python.util import deprecation
-from multiprocessing import Pool
 from functools import partial
 
 from rootNet.Model import RootNet
 from rootNet.Provider import DataProvider
+import gc
 
 deprecation._PRINT_DEPRECATION_WARNINGS = False
 
 def natural_key(string_):
-    """Tri naturel (ex: 2 avant 10)"""
     return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_)]
 
 def loadPath(search_path, ext='*.*'):
@@ -39,28 +34,13 @@ def mkdir(dir_path):
     except: pass 
 
 def is_task_completed(input_dir, output_dir, output_suffix, limit=-1):
-    """
-    Vérifie RAPIDEMENT si tous les fichiers de sortie attendus existent déjà.
-    """
     if not os.path.exists(output_dir):
         return False
-
-    # 1. Lister les entrées attendues
     inputs = loadPath(input_dir, '*.png')
-    if not inputs:
-        return False
-    
-    if limit != -1:
-        inputs = inputs[:limit]
-
-    # 2. Générer les noms de fichiers attendus en sortie (Set pour recherche O(1))
+    if not inputs: return False
+    if limit != -1: inputs = inputs[:limit]
     expected_files = {os.path.basename(f).replace('.png', output_suffix) for f in inputs}
-    
-    # 3. Lister les fichiers présents dans la sortie
     present_files = set(os.listdir(output_dir))
-
-    # 4. Vérifier si tout ce qu'on attend est présent (subset)
-    # Renvoie True si expected_files est inclus dans present_files
     return expected_files.issubset(present_files)
 
 def save_image_with_scale(path, arr):
@@ -73,7 +53,6 @@ def SaveSegImage(conf, name, segmentation, path, suffix=".png", cutpad=False):
     if cutpad:
         h, w = conf['OriginalSize']
         segmentation = segmentation[:h, :w]
-            
     if suffix == ".nii.gz":
         name = name[0][0].replace(suffix, ".nii.gz")
         nombre = os.path.join(path, name)
@@ -88,78 +67,76 @@ def SaveSegImage(conf, name, segmentation, path, suffix=".png", cutpad=False):
 def Segment(conf, input_dir, output_dir, checkpoint_path=None):
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
     
-    # --- CHECK DE SKIP INTELLIGENT ---
-    # Si tous les fichiers sont déjà là, on ne charge même pas TensorFlow
     if is_task_completed(input_dir, output_dir, "_mask.png", conf.get('LIMIT', -1)):
-        print(f"      [SKIP COMPLET] Segmentation déjà terminée pour {os.path.basename(output_dir)}")
-        return
-    # ---------------------------------
+        return # Skip silent
+    
+    tf_config = tf.compat.v1.ConfigProto()
+    tf_config.gpu_options.allow_growth = True
 
     Provider = DataProvider(input_dir, data_suffix=".png")
     data, name = Provider(1)
     
-    sess = tf.compat.v1.Session()
+    sess = tf.compat.v1.Session(config=tf_config)
 
     conf["batchSize"] = 1
     conf["tileSize"] = list(data.shape[1:3])
 
     net = RootNet(sess, conf, "RootNET", False)
     
-    if checkpoint_path:
-        conf['ckptDir'] = checkpoint_path
-    else:
-        conf['ckptDir'] = os.path.join(os.path.join('modelWeights', conf['Model']), 'ckpt')
+    ckpt = checkpoint_path if checkpoint_path else os.path.join('modelWeights', conf['Model'], 'ckpt')
     
     try:
-        net.restore(conf['ckptDir'])
+        net.restore(ckpt)
     except Exception as e:
-        print(f"      [ERREUR] Impossible de charger les poids : {e}")
+        print(f"      [ERREUR LOAD] {conf['Model']} : {e}")
         sess.close()
+        tf.compat.v1.reset_default_graph()
         return
 
     limit = conf['LIMIT']
     n = limit if limit != -1 else len(Provider.data_files)
     
     for i in range(0, n):
-        if i != 0:
-            data, name = Provider(1)
-            
-        mask_name = name[0][0].replace('.png', '_mask.png')
-        # Check unitaire au cas où le dossier serait partiellement rempli
-        if os.path.exists(os.path.join(output_dir, mask_name)):
-            # print(f"      [Saut] Masque déjà existant pour {mask_name}")
-            continue
-            
-        segment = net.segment(data)
-        outimg = segment[0,:,:,1]
+        if i != 0: data, name = Provider(1)
         
+        mask_name = name[0][0].replace('.png', '_mask.png')
+        if os.path.exists(os.path.join(output_dir, mask_name)):
+            continue
+        
+        try:
+            segment = net.segment(data)
+        except Exception as e:
+            print(f"      [ERREUR SEGMENT] {conf['Model']} : {e}")
+            continue
+        outimg = segment[0,:,:,1]
         SaveSegImage(conf, name, outimg, output_dir, ".png", True)
         
+    sess.close()
     tf.compat.v1.reset_default_graph()
-    sess.close()    
+    del net
+    del sess
+    del Provider
+    del data
+    gc.collect()
 
 def process_single_frame(image_path, model_paths, valid_models, use_crf):
     filename = os.path.basename(image_path)
     mask_name = filename.replace('.png', '_mask.png')
-    
     original_img = cv2.imread(image_path, 0)
-    if original_img is None:
-        return None 
-    
+    if original_img is None: return None 
     shape = original_img.shape
     segs = []
 
     for mp in model_paths:
         full_mask_path = os.path.join(mp, mask_name)
         if os.path.exists(full_mask_path):
-            segs.append(cv2.imread(full_mask_path, 0).astype('float64') / 255.0)
+            segs.append(cv2.imread(full_mask_path, 0).astype('float32') / 255.0)
         else:
-            segs.append(np.zeros(shape, dtype=np.float64))
+            segs.append(np.zeros(shape, dtype=np.float32))
 
-    if not segs:
-        return np.zeros(shape, dtype=np.float64)
-        
-    ensemble = np.mean(segs, axis=0) 
+    if not segs: return np.zeros(shape, dtype=np.float32)
+    
+    ensemble = np.mean(segs, axis=0).astype(np.float32)
     
     if use_crf:
         image_rgb = cv2.imread(image_path, 1) 
@@ -168,33 +145,24 @@ def process_single_frame(image_path, model_paths, valid_models, use_crf):
         ensemble_2ch = np.dstack((1.0 - ensemble, ensemble))
         label_1 = np.transpose(ensemble_2ch, (2, 0, 1))
         
-        unary = -np.log(np.clip(label_1, 1e-5, 1.0))
-        unary = unary.astype(np.float64) # Float64 ici pour calcul interne
-        
+        unary = -np.log(np.clip(label_1, 1e-5, 1.0)).astype(np.float32)
         C, H, W = unary.shape
-        unary = unary.reshape(2, -1)
-        unary = np.ascontiguousarray(unary)
+        unary = np.ascontiguousarray(unary.reshape(2, -1))
         
-        # Le binding C++ de pydensecrf attend généralement du float32 pour l'input
-        # On cast juste avant l'envoi
         denseCRF = dcrf.DenseCRF2D(W, H, 2)
-        denseCRF.setUnaryEnergy(unary.astype(np.float32)) 
+        denseCRF.setUnaryEnergy(unary) 
         denseCRF.addPairwiseBilateral(sxy=5, srgb=3, rgbim=image_rgb, compat=1)
-        
         q = denseCRF.inference(1)
-        crf_map = np.array(q).reshape(2, H, W)
-        return crf_map[1, :, :].astype(np.float64) # Retour en float64
+        
+        return np.array(q).reshape(2, H, W)[1, :, :].astype(np.float32)
     else:
         return ensemble
-    
-def ensembleModels(conf, input_dir, output_root_for_epoch, crf, models, sub_folder=""):   
+
+def ensembleModels(conf, input_dir, output_root_for_epoch, crf, models, sub_folder="", max_cpu=4):   
     ensemble_final_dir = os.path.join(output_root_for_epoch, "EnsembleResult", sub_folder)
     
-    # --- CHECK DE SKIP INTELLIGENT ---
     if is_task_completed(input_dir, ensemble_final_dir, "_ensemble.png", conf.get('LIMIT', -1)):
-        print(f"      [SKIP COMPLET] Ensemble déjà terminé pour {sub_folder}")
         return
-    # ---------------------------------
 
     model_paths = []
     valid_models = []
@@ -204,54 +172,93 @@ def ensembleModels(conf, input_dir, output_root_for_epoch, crf, models, sub_fold
             model_paths.append(p)
             valid_models.append(m)
     
-    if not valid_models:
-        return
+    if not valid_models: return
 
     images = loadPath(input_dir, '*.png') 
-    if not images:
-        return
-
+    if not images: return
     limit = conf['LIMIT']
-    n = limit if limit != -1 else len(images)
-    images = images[:n]
+    if limit != -1: images = images[:limit]
 
     mkdir(ensemble_final_dir)
-
     h, w = cv2.imread(images[0], 0).shape
-    accum = np.zeros((h, w), dtype=np.float64)
+    accum = np.zeros((h, w), dtype=np.float32)
 
-    worker = partial(process_single_frame, 
-                     model_paths=model_paths, 
-                     valid_models=valid_models, 
-                     use_crf=crf)
+    worker = partial(process_single_frame, model_paths=model_paths, valid_models=valid_models, use_crf=crf)
 
-    num_processes = min(os.cpu_count(), 84) 
-    print(f"      [Ensemble] Démarrage parallèle sur {num_processes} coeurs...")
-
-    with Pool(processes=num_processes) as pool:
-        for i, processed_img in enumerate(pool.imap(worker, images, chunksize=1)): 
-            
-            image_path = images[i] 
-            
-            if processed_img is None:
-                print(f"      [Erreur] Image {os.path.basename(image_path)} ignorée.")
-                continue
-
+    chunksize = 1 # max(1, len(images) // (max_cpu * 4))
+    with mp.Pool(processes=max_cpu) as pool:
+        for i, processed_img in enumerate(pool.imap(worker, images, chunksize=chunksize)): 
+            if processed_img is None: continue
             accum = (conf['Alpha'] * accum + processed_img) / (1.0 + conf['Alpha'])
-            
             _, outimg = cv2.threshold(accum, conf['Thresh'], 1.0, cv2.THRESH_BINARY)
-            
-            filename = os.path.basename(image_path)
-            final_name = filename.replace('.png', '_ensemble.png')
+            final_name = os.path.basename(images[i]).replace('.png', '_ensemble.png')
             save_image_with_scale(os.path.join(ensemble_final_dir, final_name), outimg)
-            
-            if i % 50 == 0:
-                print(f"      Traitement: {i}/{n}", end='\r')
 
-    print(f"      [Ensemble] Terminé pour {sub_folder}")
     return
 
+def process_job_folder(gpu_id, job_data, conf, available_models, base_output_dir, use_crf, max_cpu_allowed=96):
+    epoch_name, sub_dir, input_dir_root = job_data
+    
+    current_input_dir = os.path.join(input_dir_root, sub_dir)
+    epoch_output_root = os.path.join(base_output_dir, epoch_name)
+    
+    # print(f"[GPU {gpu_id}] Start: {epoch_name} / {sub_dir}")
+
+    for model_name in available_models:
+        conf['Model'] = model_name
+        model_sub_out_dir = os.path.join(epoch_output_root, model_name, sub_dir)
+        mkdir(model_sub_out_dir)
+        
+        weights_path = os.path.join('modelWeights', model_name, epoch_name)
+        if os.path.exists(weights_path):
+            Segment(conf, current_input_dir, model_sub_out_dir, checkpoint_path=weights_path)
+
+    ensembleModels(conf, current_input_dir, epoch_output_root, use_crf, available_models, 
+                   sub_folder=sub_dir, max_cpu=max_cpu_allowed)
+    
+    # empty memory 
+    gc.collect()
+    
+    # delete model folders to save space
+    for model_name in available_models:
+        folder_to_delete = os.path.join(epoch_output_root, model_name, sub_dir)
+        if os.path.exists(folder_to_delete):
+            try: shutil.rmtree(folder_to_delete)
+            except: pass
+            
+    # archive entire ensemble folder
+    ensemble_folder = os.path.join(epoch_output_root, "EnsembleResult")
+    tar_path = os.path.join(base_output_dir, 'ArchivedEpochs', f"{epoch_name}.tar.gz")
+    if os.path.exists(ensemble_folder):
+        shutil.make_archive(base_name=tar_path.replace('.tar.gz', ''), format='gztar', root_dir=ensemble_folder)
+        try: shutil.rmtree(ensemble_folder)
+        except: pass
+    
+    print(f"[GPU {gpu_id}] Terminé: {epoch_name}/{sub_dir}")
+
+
+def gpu_worker(gpu_id, job_queue, conf, available_models, base_output_dir, use_crf, max_cpu_allowed=96):
+    """
+    Main loop for a persistent GPU worker process.
+    """
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+
+    while True:
+        try:
+            job = job_queue.get()
+            if job is None:
+                break # Termination signal
+            
+            process_job_folder(gpu_id, job, conf, available_models, base_output_dir, use_crf, max_cpu_allowed)
+            
+        except Exception as e:
+            print(f"[GPU {gpu_id}] CRITICAL ERROR: {e}")
+            import traceback
+            traceback.print_exc()
+
 if __name__ == "__main__":
+    mp.set_start_method('spawn', force=True)
+
     conf1 = {}
     try:
         exec(open('config.conf').read(), conf1)
@@ -263,78 +270,89 @@ if __name__ == "__main__":
     
     conf = {**conf1, **conf2}
     
+    conf.pop('__builtins__', None)
+    
     parser = argparse.ArgumentParser()
-    parser.add_argument('--use_crf', action='store_true', default=True, help='Apply CRF post-processing')
-    parser.add_argument('--output_dir', type=str, help='Output directory root', nargs="?")
-    parser.add_argument('--input_dir', type=str, help='Input directory', nargs="?")
+    parser.add_argument('--use_crf', action='store_true', default=True)
+    parser.add_argument('--output_dir', type=str, nargs="?")
+    parser.add_argument('--input_dir', type=str, nargs="?")
+    parser.add_argument('--gpus', type=str, default="0,1,2,3", help="List of GPUs to use, e.g. 0,1,2,3")
 
     args = parser.parse_args()
     
     if not args.input_dir:
-        parser.print_help()
         raise Exception("Input directory required")
     
     base_output_dir = args.output_dir if args.output_dir else os.path.join(args.input_dir, 'SegEnsemble_AllEpochs')
     mkdir(base_output_dir)
 
-    use_crf = args.use_crf
-    available_models = ['DeepLab', 'ResUNet', 'ResUNetDS', 'SegNet', 'UNet']
-
+    # Detect Available Epochs
+    available_models = ['ResUNet', 'DeepLab', 'ResUNetDS', 'SegNet', 'UNet']
     reference_model_dir = os.path.join('modelWeights', 'DeepLab')
     if not os.path.exists(reference_model_dir):
         reference_model_dir = os.path.join('modelWeights', available_models[1])
 
-    epoch_folders = [d for d in os.listdir(reference_model_dir) if d.startswith('epoch_') and os.path.isdir(os.path.join(reference_model_dir, d))]
+    epoch_folders = [d for d in os.listdir(reference_model_dir) if d.startswith('epoch_')]
     epoch_folders.sort(key=natural_key, reverse=True)
-    print(f"Époques détectées : {len(epoch_folders)}")
 
     all_content = os.listdir(args.input_dir)
     sub_dirs = [d for d in all_content if os.path.isdir(os.path.join(args.input_dir, d)) and not d.startswith('.')]
     sub_dirs.sort(key=natural_key)
+
+    job_queue = mp.Queue()
     
-    # --- 3. Boucle Principale ---
+    os.makedirs(os.path.join(base_output_dir, 'ArchivedEpochs'), exist_ok=True)
+    
+    total_jobs = 0
     for epoch_name in epoch_folders:
-        print(f"\n=== Traitement de : {epoch_name} ===")
+        epoch_number = int(epoch_name.split('_')[1])
+        if (epoch_number % 5) != 0: continue
         
-        epoch_output_root = os.path.join(base_output_dir, epoch_name)
-        mkdir(epoch_output_root)
+        missing_model = None
+        for model in available_models:
+            weight_path = os.path.join('modelWeights', model, epoch_name)
+            
+            if not os.path.exists(weight_path) or len(os.listdir(weight_path)) == 0:
+                missing_model = model
+                break
         
-        epoch_number = epoch_name.split('_')[1]
-        epoch_number = int(epoch_number)
-        if (epoch_number % 5) != 0:
-            continue 
-
+        if missing_model:
+            print(f"  [SKIP] {epoch_name} ignorée : Poids manquants pour '{missing_model}'")
+            continue
+        
+        # if a tar.gz of this epoch exists, skip processing
+        tar_path = os.path.join(base_output_dir, 'ArchivedEpochs', f"{epoch_name}.tar.gz")
+        if os.path.exists(tar_path):
+            print(f"  [SKIP] {epoch_name} ignorée : Archive trouvée.")
+            continue
+        
+        mkdir(os.path.join(base_output_dir, epoch_name))
+        
         for sub in sub_dirs:
-            current_input_dir = os.path.join(args.input_dir, sub)
-            print(f" -> Dossier Image : {sub if sub else 'Root'}")
+            # Job data: (Epoch, SubFolder, InputRoot)
+            job_queue.put( (epoch_name, sub, args.input_dir) )
+            total_jobs += 1
 
-            for model_name in available_models:
-                conf['Model'] = model_name  
-                
-                model_sub_out_dir = os.path.join(epoch_output_root, model_name, sub)
-                mkdir(model_sub_out_dir)
-
-                weights_path = os.path.join('modelWeights', model_name, epoch_name)
-                
-                if os.path.exists(weights_path): 
-                    Segment(conf, current_input_dir, model_sub_out_dir, checkpoint_path=weights_path)
-                else:
-                    pass
-            
-            ensembleModels(conf, current_input_dir, epoch_output_root, use_crf, available_models, sub_folder=sub)
-            
-            for model_name in available_models:
-                folder_to_delete = os.path.join(epoch_output_root, model_name, sub)
-                if os.path.exists(folder_to_delete):
-                    try:
-                        shutil.rmtree(folder_to_delete)
-                    except Exception as e:
-                        print(f"      [Erreur Delete] {folder_to_delete} : {e}")
-            
-        for model_name in available_models:
-            parent_folder = os.path.join(epoch_output_root, model_name)
-            if os.path.exists(parent_folder):
-                try:
-                    shutil.rmtree(parent_folder)
-                except Exception as e:
-                    pass
+    print(f"=== Workload: {total_jobs} tasks distributed on GPUs: {args.gpus} ===")
+    
+    # --- Start Workers ---
+    gpu_list = [int(x) for x in args.gpus.split(',')]
+    nb_gpus = len(gpu_list)
+    total_cores = mp.cpu_count()
+    
+    processes = []
+    
+    cpus_per_worker = max(1, (total_cores - 2) // nb_gpus)
+    
+    for gpu_id in gpu_list:
+        p = mp.Process(target=gpu_worker, 
+                       args=(gpu_id, job_queue, conf, available_models, base_output_dir, args.use_crf, cpus_per_worker))
+        p.start()
+        processes.append(p)
+        job_queue.put(None) 
+    
+    for p in processes:
+        p.join()
+        
+        
+    print("\nAll tasks completed.")

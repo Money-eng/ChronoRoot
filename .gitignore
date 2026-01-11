@@ -8,6 +8,7 @@ __pycache__/
 *.json
 *.csv
 *.ods
+*.tar.gz
 
 # C extensions
 *.so
