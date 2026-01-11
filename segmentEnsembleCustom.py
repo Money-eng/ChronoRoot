@@ -11,6 +11,7 @@ import pathlib
 import multiprocessing as mp
 from tensorflow.python.util import deprecation
 from functools import partial
+import subprocess
 
 from rootNet.Model import RootNet
 from rootNet.Provider import DataProvider
@@ -251,6 +252,26 @@ def gpu_worker(gpu_id, job_queue, conf, available_models, base_output_dir, use_c
             print(f"[GPU {gpu_id}] CRITICAL ERROR: {e}")
             job_queue.task_done()
 
+def archive_manager_worker(task_queue):
+    while True:
+        task = task_queue.get()
+        if task is None:
+            task_queue.task_done()
+            break
+            
+        source_dir, output_tar = task
+        try:
+            cmd = ['tar', '-czf', output_tar, '-C', source_dir, '.']
+            subprocess.check_call(cmd) # returns CallingProcessError if fails
+            
+            shutil.rmtree(source_dir)
+            print(f"   [ARCHIVE OK] {os.path.basename(output_tar)}")
+            
+        except Exception as e:
+            print(f"   [ARCHIVE ERROR] Echec sur {source_dir}: {e}")
+        
+        task_queue.task_done()
+
 if __name__ == "__main__":
     mp.set_start_method('spawn', force=True)
 
@@ -278,6 +299,11 @@ if __name__ == "__main__":
     base_output_dir = args.output_dir if args.output_dir else os.path.join(args.input_dir, 'SegEnsemble_AllEpochs')
     mkdir(base_output_dir)
     mkdir(os.path.join(base_output_dir, 'ArchivedEpochs'))
+    
+    # Tar.gz manager
+    archive_queue = mp.JoinableQueue()
+    archiver = mp.Process(target=archive_manager_worker, args=(archive_queue,))
+    archiver.start()
 
     # Detect available models and epochs
     available_models = ['ResUNet', 'DeepLab', 'ResUNetDS', 'SegNet', 'UNet']
@@ -335,22 +361,24 @@ if __name__ == "__main__":
         print(f"--- End Processing Epoch {epoch_name}. Creating GLOBAL archive... ---")
         
         if os.path.exists(epoch_full_folder):
-            # Archive the parent folder of the epoch (which contains ResUNet, DeepLab, EnsembleResult, etc.)
-            shutil.make_archive(
-                base_name=tar_path.replace('.tar.gz', ''), 
-                format='gztar', 
-                root_dir=epoch_full_folder
-            )
+            # # Archive the parent folder of the epoch (which contains ResUNet, DeepLab, EnsembleResult, etc.)
+            # shutil.make_archive(
+            #     base_name=tar_path.replace('.tar.gz', ''), 
+            #     format='gztar', 
+            #     root_dir=epoch_full_folder
+            # )
             
-            # Once the archive is created and secured, delete the ENTIRE epoch folder
-            try: shutil.rmtree(epoch_full_folder)
-            except Exception as e: print(f"Warning delete {epoch_full_folder}: {e}")
+            # Use the archiver process to handle archiving
+            archive_queue.put( (epoch_full_folder, tar_path) )
+            print(f"   [ARCHIVE QUEUED] {epoch_name} -> {tar_path}")
             
-        print(f"--- Archived (ALL) : {tar_path} ---")
     for _ in range(nb_gpus):
         job_queue.put(None)
     
     for p in workers:
         p.join()
+
+    archive_queue.put(None)
+    archiver.join()
         
     print("\nAll tasks completed.")
