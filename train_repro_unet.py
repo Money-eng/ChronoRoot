@@ -314,7 +314,7 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
             
             if len(d_val) > 0:
                 global last_f1_score
-                do_heavy = last_f1_score > 0.5 and ((epoch + 1) % HEAVY_METRICS_FREQ == 0) or ((epoch + 1) == current_conf['numEpochs'])
+                do_heavy = False #last_f1_score > 0.5 and ((epoch + 1) % HEAVY_METRICS_FREQ == 0) or ((epoch + 1) == current_conf['numEpochs'])
                 
                 metrics = evaluate_validation(sess, net, d_val, g_val, current_conf, val_writer, epoch, model_name, do_heavy)
                 print(f"Metriques de validation à la fin de l'époque {epoch+1} : {metrics}")

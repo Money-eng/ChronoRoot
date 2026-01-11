@@ -86,11 +86,9 @@ def Segment(conf, input_dir, output_dir, checkpoint_path=None):
     conf["tileSize"] = list(data.shape[1:3])
 
     net = RootNet(sess, conf, "RootNET", False)
-    
-    ckpt = checkpoint_path if checkpoint_path else os.path.join('modelWeights', conf['Model'], 'ckpt')
-    
+        
     try:
-        net.restore(ckpt)
+        net.restore(checkpoint_path)
     except Exception as e:
         print(f"      [ERREUR LOAD] {conf['Model']} : {e}")
         sess.close()
@@ -332,7 +330,7 @@ if __name__ == "__main__":
             job_queue.put( (epoch_name, sub, args.input_dir) )
             jobs_count += 1
             
-        job_queue.join()
+        job_queue.join() # Wait for all jobs in this epoch to finish
         
         print(f"--- End Processing Epoch {epoch_name}. Creating GLOBAL archive... ---")
         
