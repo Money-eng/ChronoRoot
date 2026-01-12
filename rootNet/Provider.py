@@ -25,6 +25,7 @@ import cv2
 import nibabel as nib
 import re
 
+
 def natural_key(string_):
     """See http://www.codinghorror.com/blog/archives/001018.html"""
     return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_)]
@@ -52,17 +53,16 @@ class BaseDataProvider(object):
 
     channels = 1
     n_class = 2
-    
 
     def __init__(self, a_min=0, a_max=255):
         self.a_min = a_min if a_min is not None else -np.inf
         self.a_max = a_max if a_min is not None else np.inf
 
     def _load_data_and_label(self):
-        train_data, label = self._next_data()       
-        labels = self._process_labels(label)  
+        train_data, label = self._next_data()
+        labels = self._process_labels(label)
         return train_data, labels
-        
+
     def _process_labels(self, label):
         if self.n_class == 2:
             nx = label.shape[1]
@@ -70,9 +70,8 @@ class BaseDataProvider(object):
             labels = np.zeros((ny, nx, self.n_class), dtype=np.float32)
             labels[..., 1] = label
             labels[..., 0] = ~label
-            return labels        
+            return labels
         return label
-    
 
     def __call__(self, n):
         train_data, labels = self._load_data_and_label()
@@ -91,16 +90,16 @@ class BaseDataProvider(object):
 
 
 def adjust_gamma(image, gamma=1.0):
-	# build a lookup table mapping the pixel values [0, 255] to
-	# their adjusted gamma values
-	invGamma = 1.0 / gamma
-	table = np.array([((i / 255.0) ** invGamma) * 255
-		for i in np.arange(0, 256)]).astype("uint8")
- 
-	# apply gamma correction using the lookup table
-	return np.float32(cv2.LUT(image.astype('uint8'), table))
+    # build a lookup table mapping the pixel values [0, 255] to
+    # their adjusted gamma values
+    invGamma = 1.0 / gamma
+    table = np.array([((i / 255.0) ** invGamma) * 255
+                      for i in np.arange(0, 256)]).astype("uint8")
 
-   
+    # apply gamma correction using the lookup table
+    return np.float32(cv2.LUT(image.astype('uint8'), table))
+
+
 class ImageDataProvider(BaseDataProvider):
     """
     Generic data provider for images, supports gray scale and colored images.
@@ -121,107 +120,101 @@ class ImageDataProvider(BaseDataProvider):
     :param n_class: (optional) number of classes, default=2
     
     """
-    
-    def __init__(self, search_path, augment = False, random_state = None, a_min=None, a_max=None, 
-                 data_suffix=".png", mask_suffix='.nii.gz', shuffle_data=False, n_class = 2):
+
+    def __init__(self, search_path, augment=False, random_state=None, a_min=None, a_max=None,
+                 data_suffix=".png", mask_suffix='.nii.gz', shuffle_data=False, n_class=2):
         super(ImageDataProvider, self).__init__(a_min, a_max)
-      
+
         self.data_suffix = data_suffix
         self.mask_suffix = mask_suffix
         self.file_idx = -1
         self.shuffle_data = shuffle_data
         self.n_class = n_class
         self.augment = augment
-        
+
         self.data_files = self._find_data_files(search_path)
-        
-        if not(random_state):
+
+        if not (random_state):
             self.random_state = np.random.RandomState(None)
         else:
             self.random_state = random_state
             # print(random_state)
-        
+
         if self.shuffle_data:
             self.random_state.shuffle(self.data_files)
-        
+
         assert len(self.data_files) > 0, "No training files"
         # print("Number of files used: %s" % len(self.data_files))
-        
-        self.channels = 1        
-        
-    
+
+        self.channels = 1
+
     def _augment(self, image, label):
-        coin = self.random_state.uniform(0,1)
-        if coin > 0.6:    
-            value = self.random_state.uniform(0.7,1.3)
+        coin = self.random_state.uniform(0, 1)
+        if coin > 0.6:
+            value = self.random_state.uniform(0.7, 1.3)
             image = adjust_gamma(image, value)
-        
-        coin = self.random_state.uniform(0,1)
-        if coin > 0.3:        
-            image = cv2.flip(image,1)
-            label = cv2.flip(label.astype('uint8'),1).astype('bool')
 
-        coin = self.random_state.uniform(0,1)
+        coin = self.random_state.uniform(0, 1)
+        if coin > 0.3:
+            image = cv2.flip(image, 1)
+            label = cv2.flip(label.astype('uint8'), 1).astype('bool')
+
+        coin = self.random_state.uniform(0, 1)
         if coin > 0.1:
-            image = cv2.GaussianBlur(image,(5,5),0)
+            image = cv2.GaussianBlur(image, (5, 5), 0)
 
-        coin = self.random_state.uniform(0,1)
+        coin = self.random_state.uniform(0, 1)
         if coin > 0.2:
-            noise = self.random_state.randn(image.shape[0],image.shape[1]).astype('float32')*4
+            noise = self.random_state.randn(image.shape[0], image.shape[1]).astype('float32') * 4
             image = cv2.add(image, noise)
             image = np.clip(image, 0, 255)
-            
+
         # coin = self.random_state.uniform(0,1)
         # if coin > 0.5:
         #     value = self.random_state.uniform(0.90,1.10)
         #     image = cv2.resize(image, (0,0), fx=value, fy=value)
         #     label = cv2.resize(label.astype('float'), (0,0), fx=value, fy=value).astype('bool')
-            
+
         return image, label
-    
-    
+
     def _find_data_files(self, search_path):
         data_root = pathlib.Path(search_path)
         all_files = list(data_root.glob('*.*'))
         all_files = [str(path) for path in all_files]
         return [name for name in all_files if self.data_suffix in name and not self.mask_suffix in name]
-    
-    
+
     def _load_file(self, path, dtype=np.float32):
         return np.array(Image.open(path).convert('L'), dtype)
 
-
     def _load_mask(self, path):
         img = nib.load(path)
-        img = np.transpose(img.get_fdata()[:,:,0]).astype(np.bool)
+        img = np.transpose(img.get_fdata()[:, :, 0]).astype(np.bool)
         return img
-    
-    
+
     def _cylce_file(self):
         self.file_idx += 1
         if self.file_idx >= len(self.data_files):
-            self.file_idx = 0 
-            
-        
+            self.file_idx = 0
+
     def _next_data(self):
         self._cylce_file()
         image_name = self.data_files[self.file_idx]
         label_name = image_name.replace(self.data_suffix, self.mask_suffix)
         img = self._load_file(image_name, np.float32)
         label = self._load_mask(label_name)
-	
+
         if self.augment:
             img, label = self._augment(img, label)
-    
-        return img,label
+
+        return img, label
 
 
 class MPImageDataProvider(BaseDataProvider):
-    
-    def __init__(self, search_path, augment = False, random_state = None, a_min=None, a_max=None, 
-                 data_suffix=".png", mask_suffix='.nii.gz', shuffle_data=False, n_class = 2):
+
+    def __init__(self, search_path, augment=False, random_state=None, a_min=None, a_max=None,
+                 data_suffix=".png", mask_suffix='.nii.gz', shuffle_data=False, n_class=2):
         super(MPImageDataProvider, self).__init__(a_min, a_max)
-      
+
         self.data_suffix = data_suffix
         self.mask_suffix = mask_suffix
         self.file_idx = -1
@@ -229,96 +222,92 @@ class MPImageDataProvider(BaseDataProvider):
         self.n_class = n_class
         self.data_files = self._find_data_files(search_path)
         self.augment = augment
-        
-        if not(random_state):
+
+        if not (random_state):
             self.random_state = np.random.RandomState(None)
         else:
             self.random_state = random_state
-        
+
         if self.shuffle_data:
             self.random_state.shuffle(self.data_files)
-        
+
         assert len(self.data_files) > 0, "No training files"
         # print("Number of files used: %s" % len(self.data_files))
-        
-        self.channels = 1        
-        
-    
+
+        self.channels = 1
+
     def _augment(self, image, label):
-        coin = self.random_state.uniform(0,1)
-        if coin > 0.7:    
-            value = self.random_state.uniform(0.7,1.3)
+        coin = self.random_state.uniform(0, 1)
+        if coin > 0.7:
+            value = self.random_state.uniform(0.7, 1.3)
             image = adjust_gamma(image, value)
-        
-        coin = self.random_state.uniform(0,1)
-        if coin > 0.3:        
-            image = cv2.flip(image,1)
-            label = cv2.flip(label.astype('uint8'),1).astype('bool')
 
-        coin = self.random_state.uniform(0,1)
-        if coin > 0.2:
-            image = cv2.GaussianBlur(image,(5,5),0)
-
-        coin = self.random_state.uniform(0,1)
+        coin = self.random_state.uniform(0, 1)
         if coin > 0.3:
-            noise = self.random_state.randn(image.shape[0],image.shape[1]).astype('float32')*4
+            image = cv2.flip(image, 1)
+            label = cv2.flip(label.astype('uint8'), 1).astype('bool')
+
+        coin = self.random_state.uniform(0, 1)
+        if coin > 0.2:
+            image = cv2.GaussianBlur(image, (5, 5), 0)
+
+        coin = self.random_state.uniform(0, 1)
+        if coin > 0.3:
+            noise = self.random_state.randn(image.shape[0], image.shape[1]).astype('float32') * 4
             image = cv2.add(image, noise)
             image = np.clip(image, 0, 255)
-            
-        coin = self.random_state.uniform(0,1)
+
+        coin = self.random_state.uniform(0, 1)
         if coin > 0.5:
-            value = self.random_state.uniform(0.90,1.10)
-            image = cv2.resize(image, (0,0), fx=value, fy=value)
-            label = cv2.resize(label.astype('float'), (0,0), fx=value, fy=value).astype('bool')
-                
+            value = self.random_state.uniform(0.90, 1.10)
+            image = cv2.resize(image, (0, 0), fx=value, fy=value)
+            label = cv2.resize(label.astype('float'), (0, 0), fx=value, fy=value).astype('bool')
+
         return image, label
-    
+
     def _find_data_files(self, search_path):
         data = []
         for i in search_path:
             data_root = pathlib.Path(i)
             all_files = list(data_root.glob('*.*'))
             all_files = [str(path) for path in all_files]
-            for name in all_files: 
+            for name in all_files:
                 if self.data_suffix in name and not self.mask_suffix in name:
                     data.append(name)
         return data
-    
-    
+
     def _load_file(self, path, dtype=np.float32):
         return np.array(Image.open(path).convert('L'), dtype)
 
-
     def _load_mask(self, path):
         img = nib.load(path)
-        img = np.transpose(img.get_fdata()[:,:,0]).astype(np.bool)
+        img = np.transpose(img.get_fdata()[:, :, 0]).astype(np.bool)
         return img
-    
-    
+
     def _cylce_file(self):
         self.file_idx += 1
         if self.file_idx >= len(self.data_files):
-            self.file_idx = 0 
+            self.file_idx = 0
 
-        
     def _next_data(self):
         self._cylce_file()
         image_name = self.data_files[self.file_idx]
         label_name = image_name.replace(self.data_suffix, self.mask_suffix)
         img = self._load_file(image_name, np.float32)
         label = self._load_mask(label_name)
-	
+
         if self.augment:
             img, label = self._augment(img, label)
-    
-        return img,label
+
+        return img, label
 
 
 class DataProvider(BaseDataProvider):
-    
-    def __init__(self, search_path, pad = True, random_state = None, a_min=None, a_max=None, data_suffix=".png", mask_suffix='_mask.png', shuffle_data=False, n_class = 2):
+
+    def __init__(self, search_path, pad=True, random_state=None, a_min=None, a_max=None, data_suffix=".png",
+                 mask_suffix='_mask.png', shuffle_data=False, n_class=2):
         super(DataProvider, self).__init__(a_min, a_max)
-      
+
         self.data_suffix = data_suffix
         self.mask_suffix = mask_suffix
         self.file_idx = -1
@@ -326,80 +315,75 @@ class DataProvider(BaseDataProvider):
         self.n_class = n_class
         self.pad = pad
         self.search_path = search_path
-        
+
         self.data_files = self._find_data_files(search_path)
-        
-        if not(random_state):
+
+        if not (random_state):
             self.random_state = np.random.RandomState(None)
         else:
             self.random_state = random_state
-        
+
         if self.shuffle_data:
             self.random_state.shuffle(self.data_files)
-        
+
         assert len(self.data_files) > 0, "No training files"
         # print("Number of files used: %s" % len(self.data_files))
-        
-        self.channels = 1        
-        
-        
+
+        self.channels = 1
+
     def _find_data_files(self, search_path):
         data_root = pathlib.Path(search_path)
         all_files = list(data_root.glob('*.*'))
         all_files = [str(path) for path in all_files]
-        all_files.sort(key = natural_key)
+        all_files.sort(key=natural_key)
         data = [name for name in all_files if self.data_suffix in name and not self.mask_suffix in name]
         return [name for name in data if not name.replace(self.data_suffix, self.mask_suffix) in all_files]
-    
-    
+
     def _load_file(self, path, dtype=np.float32):
         return np.array(Image.open(path).convert('L'), dtype)
-        
-    
+
     def _cylce_file(self):
         self.file_idx += 1
         if self.file_idx >= len(self.data_files):
-            self.file_idx = 0 
+            self.file_idx = 0
 
-        
     def _next_data(self):
         self._cylce_file()
         image_name = self.data_files[self.file_idx]
         img = self._load_file(image_name, np.float32)
-        
+
         return img
-    
+
     def __call__(self, n):
         names = []
         train_data = self._next_data() / 255.0
-        
+
         name = self.data_files[self.file_idx]
-        name = name.replace(self.search_path,'')
+        name = name.replace(self.search_path, '')
         if name[0] == "/":
             name = name[1:]
         names.append([name])
-        
+
         if self.pad:
-            train_data = padImgToMakeItMultipleOf(train_data, [32,32])
-            
-        
+            train_data = padImgToMakeItMultipleOf(train_data, [32, 32])
+
         ny = train_data.shape[0]
         nx = train_data.shape[1]
-        
+
         X = np.zeros((n, ny, nx, 1))
-    
-        X[0,:,:,0] = train_data
+
+        X[0, :, :, 0] = train_data
         for i in range(1, n):
             train_data = self._next_data()
-            
+
             name = self.data_files[self.file_idx]
-            name = name.replace(self.search_path,'')
+            name = name.replace(self.search_path, '')
             if name[0] == "/":
                 name = name[1:]
-            
+
             names.append([name])
             if self.pad:
-                train_data = padImgToMakeItMultipleOf(train_data, [32,32])
-            X[i,:,:,0] = train_data
-    
+                train_data = padImgToMakeItMultipleOf(train_data, [32, 32])
+            X[i, :, :, 0] = train_data
+
         return X, names

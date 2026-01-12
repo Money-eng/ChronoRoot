@@ -21,45 +21,46 @@ import cv2
 from skimage.morphology import skeletonize
 import os
 
+
 def plot_seg(grafo1, original, ske2):
     g, _, _, clase, _, _ = grafo1
-    
-    ske3 = np.zeros(list(ske2.shape)+[3], dtype='uint8')
-    ske3[:,:,:] = 255
+
+    ske3 = np.zeros(list(ske2.shape) + [3], dtype='uint8')
+    ske3[:, :, :] = 255
     for a in g.get_edges():
-        e = g.edge(a[0],a[1])
-        pos = np.where(ske2==clase[e][0])
+        e = g.edge(a[0], a[1])
+        pos = np.where(ske2 == clase[e][0])
         if clase[e][1] == 10:
-            ske3[pos]=[0,180,0]
+            ske3[pos] = [0, 180, 0]
         else:
-            ske3[pos]=[180,0,0]
-    
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (4,4))
+            ske3[pos] = [180, 0, 0]
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (4, 4))
     ske3 = cv2.erode(ske3, kernel)
-    
-    c = (0,0,0)
+
+    c = (0, 0, 0)
     indices = np.where(np.all(ske3 == c, axis=-1))
-    ske3[indices] = [0,180,0]
-    
+    ske3[indices] = [0, 180, 0]
+
     return ske3
 
 
 def plot_graph(grafo1, shape):
     g, pos, weight, clase, nodetype, age = grafo1
-    aux = np.ones(shape, dtype='uint8')*255
-    
+    aux = np.ones(shape, dtype='uint8') * 255
+
     for pair in g.get_edges():
         v1 = pair[0]
         p1 = tuple(np.array(pos[v1], dtype='int64'))
         v2 = pair[1]
         p2 = tuple(np.array(pos[v2], dtype='int64'))
-        
-        edge = g.edge(v1,v2)
+
+        edge = g.edge(v1, v2)
         if clase[edge][1] == 10:
             cv2.line(aux, p1, p2, (0, 255, 0), 2)
         else:
             cv2.line(aux, p1, p2, (255, 0, 0), 2)
-            
+
     for i in g.get_vertices():
         p = tuple(np.array(pos[i], dtype='int64'))
         if nodetype[i] == 'Ini' or nodetype[i] == 'FTip':
@@ -68,14 +69,14 @@ def plot_graph(grafo1, shape):
             cv2.circle(aux, p, 5, (0, 0, 200), -1)
         else:
             cv2.circle(aux, p, 5, (0, 200, 240), -1)
-        
+
     return aux
-        
-    
+
+
 def savePlotImages(name, folder, original, seg, grafo1, ske2):
     image = plot_seg(grafo1, original, ske2)
     grafo_img = plot_graph(grafo1, original.shape)
-    
+
     f1 = os.path.join(folder, "img")
     path = os.path.join(f1, name)
     cv2.imwrite(path, original)
@@ -83,11 +84,11 @@ def savePlotImages(name, folder, original, seg, grafo1, ske2):
     f2 = os.path.join(folder, "seg")
     path = os.path.join(f2, name)
     cv2.imwrite(path, seg)
-    
+
     f3 = os.path.join(folder, "labeledSeg")
     path = os.path.join(f3, name)
     cv2.imwrite(path, image)
-    
+
     f4 = os.path.join(folder, "graph")
     path = os.path.join(f4, name)
     cv2.imwrite(path, grafo_img)
@@ -98,7 +99,7 @@ def savePlotImages(name, folder, original, seg, grafo1, ske2):
 def saveEmpty(name, folder, original, seg):
     image = np.ones(original.shape[:2], dtype='uint8') * 255
     grafo_img = np.ones(original.shape[:2], dtype='uint8') * 255
-    
+
     f1 = os.path.join(folder, "img")
     path = os.path.join(f1, name)
     cv2.imwrite(path, original)
@@ -106,33 +107,34 @@ def saveEmpty(name, folder, original, seg):
     f2 = os.path.join(folder, "seg")
     path = os.path.join(f2, name)
     cv2.imwrite(path, seg)
-    
+
     f3 = os.path.join(folder, "labeledSeg")
     path = os.path.join(f3, name)
     cv2.imwrite(path, image)
-    
+
     f4 = os.path.join(folder, "graph")
     path = os.path.join(f4, name)
     cv2.imwrite(path, grafo_img)
-    
+
     return
+
 
 def getCleanSeg(segFile, bbox, seed, originalSeed):
     try:
-        seg = cv2.imread(segFile, 0)[bbox[0]:bbox[1],bbox[2]:bbox[3]]
+        seg = cv2.imread(segFile, 0)[bbox[0]:bbox[1], bbox[2]:bbox[3]]
     except:
         print(f"\tATTENTION: Impossible de lire le fichier de segmentation: {segFile}")
-        seg = np.zeros((bbox[1]-bbox[0], bbox[3]-bbox[2]), dtype='uint8')
-    
-    seg[0:originalSeed[1],:] = 0
+        seg = np.zeros((bbox[1] - bbox[0], bbox[3] - bbox[2]), dtype='uint8')
+
+    seg[0:originalSeed[1], :] = 0
 
     kernel_size = 3
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(kernel_size,kernel_size))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
     seg = cv2.dilate(seg, kernel)
     seg = cv2.erode(seg, kernel)
     seg = cv2.erode(seg, kernel)
     seg = cv2.dilate(seg, kernel)
-    
+
     contours, _ = cv2.findContours(seg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     contour_sizes = [(cv2.contourArea(contour), contour) for contour in contours]
@@ -141,94 +143,94 @@ def getCleanSeg(segFile, bbox, seed, originalSeed):
     if len(contour_sizes) != 0:
         ### Sorts list of contours by size from bigger to smaller
         contour_sizes.sort(key=lambda x: x[0], reverse=True)
-        
+
         for contour in contour_sizes:
             if contour[0] < 30:
                 break
             else:
-                dist = cv2.pointPolygonTest(contour[1],(seed[0], seed[1]), True)
+                dist = cv2.pointPolygonTest(contour[1], (seed[0], seed[1]), True)
                 dist = np.abs(dist)
-                is_in = cv2.pointPolygonTest(contour[1],(seed[0], seed[1]), False) > 0
-                
+                is_in = cv2.pointPolygonTest(contour[1], (seed[0], seed[1]), False) > 0
+
                 if (dist < 30 or is_in):
                     mask = np.zeros(seg.shape, np.uint8)
-                    cv2.drawContours(mask,[contour[1]], -1, 255, -1) 
+                    cv2.drawContours(mask, [contour[1]], -1, 255, -1)
                     seg2 = cv2.bitwise_and(mask, seg.copy())
-                
+
                     return seg2, True
-            
+
     return seg, False
 
 
 def getCleanSke(seg):
-    ske = np.array(skeletonize(seg // 255), dtype = 'uint8')
-    
+    ske = np.array(skeletonize(seg // 255), dtype='uint8')
+
     ske = prune(ske, 5)
     ske = trim(ske)
     ske = prune(ske, 3)
     ske = trim(ske)
 
     bnodes, enodes = skeleton_nodes(ske)
-    
+
     flag = False
     if len(enodes) >= 2:
         flag = True
-        
+
     return ske, bnodes, enodes, flag
 
 
-def trim(ske): ## Removes unwanted pixels from the skeleton
-    
-    T=[]
-    T0=np.array([[-1, 1, -1], 
-                 [1, 1, 1], 
-                 [0, 0, 0]]) # T0 contains X0
-    T2=np.array([[-1, 1, 0], 
-                 [1, 1, 0], 
-                 [-1, 1, 0]])
-    T4=np.array([[0, 0, 0], 
-                 [1, 1, 1], 
-                 [-1, 1, -1]])
-    T6=np.array([[0, 1, -1], 
-                 [0, 1, 1], 
-                 [0, 1, -1]])
-    S1=np.array([[1, -1, -1], 
-                 [1, 1, -1], 
-                 [-1, 1, -1]])
-    S2=np.array([[-1, 1, -1], 
-                 [1, 1, -1], 
-                 [1, -1, -1]])
-    S3=np.array([[-1, -1, -1], 
-                 [1, 1, -1], 
-                 [-1, 1, 1]])
-    S4=np.array([[-1, -1, -1], 
-                 [-1, 1, 1], 
-                 [1, 1, -1]])
-    S5=np.array([[-1, 1, 1], 
-                 [1, 1, -1], 
-                 [-1, -1, -1]])
-    S6=np.array([[1, 1, -1], 
-                 [-1, 1, 1], 
-                 [-1, -1, -1]])
-    S7=np.array([[-1, -1, 1], 
-                 [-1, 1, 1], 
-                 [-1, 1, -1]])
-    S8=np.array([[-1, 1, -1], 
-                 [-1, 1, 1], 
-                 [-1, -1, 1]])
-    C1=np.array([[-1, 1, -1], 
-                 [-1, 1, 1], 
-                 [-1, -1, -1]])
-    C2=np.array([[-1, -1, -1], 
-                 [-1, 1, 1], 
-                 [-1, 1, -1]])
-    C3=np.array([[-1, 1, -1], 
-                 [1, 1, -1], 
-                 [-1, -1, -1]])
-    C4=np.array([[-1, -1, -1], 
-                 [1, 1, -1], 
-                 [-1, 1, -1]])
-    
+def trim(ske):  ## Removes unwanted pixels from the skeleton
+
+    T = []
+    T0 = np.array([[-1, 1, -1],
+                   [1, 1, 1],
+                   [0, 0, 0]])  # T0 contains X0
+    T2 = np.array([[-1, 1, 0],
+                   [1, 1, 0],
+                   [-1, 1, 0]])
+    T4 = np.array([[0, 0, 0],
+                   [1, 1, 1],
+                   [-1, 1, -1]])
+    T6 = np.array([[0, 1, -1],
+                   [0, 1, 1],
+                   [0, 1, -1]])
+    S1 = np.array([[1, -1, -1],
+                   [1, 1, -1],
+                   [-1, 1, -1]])
+    S2 = np.array([[-1, 1, -1],
+                   [1, 1, -1],
+                   [1, -1, -1]])
+    S3 = np.array([[-1, -1, -1],
+                   [1, 1, -1],
+                   [-1, 1, 1]])
+    S4 = np.array([[-1, -1, -1],
+                   [-1, 1, 1],
+                   [1, 1, -1]])
+    S5 = np.array([[-1, 1, 1],
+                   [1, 1, -1],
+                   [-1, -1, -1]])
+    S6 = np.array([[1, 1, -1],
+                   [-1, 1, 1],
+                   [-1, -1, -1]])
+    S7 = np.array([[-1, -1, 1],
+                   [-1, 1, 1],
+                   [-1, 1, -1]])
+    S8 = np.array([[-1, 1, -1],
+                   [-1, 1, 1],
+                   [-1, -1, 1]])
+    C1 = np.array([[-1, 1, -1],
+                   [-1, 1, 1],
+                   [-1, -1, -1]])
+    C2 = np.array([[-1, -1, -1],
+                   [-1, 1, 1],
+                   [-1, 1, -1]])
+    C3 = np.array([[-1, 1, -1],
+                   [1, 1, -1],
+                   [-1, -1, -1]])
+    C4 = np.array([[-1, -1, -1],
+                   [1, 1, -1],
+                   [-1, 1, -1]])
+
     T.append(T0)
     T.append(T2)
     T.append(T4)
@@ -240,58 +242,57 @@ def trim(ske): ## Removes unwanted pixels from the skeleton
     T.append(S5)
     T.append(S6)
     T.append(S7)
-    T.append(S8)    
+    T.append(S8)
     T.append(C1)
     T.append(C2)
     T.append(C3)
     T.append(C4)
-    
+
     bp = np.zeros_like(ske)
     for t in T:
         bp = cv2.morphologyEx(ske, cv2.MORPH_HITMISS, t)
         ske = cv2.subtract(ske, bp)
-    
+
     # ske = cv2.subtract(ske, bp)
-    
+
     return ske
 
 
-def prune(skel, num_it): ## Removes branches with length lower than num_it
+def prune(skel, num_it):  ## Removes branches with length lower than num_it
     orig = skel
-    
+
     endpoint1 = np.array([[-1, -1, -1],
                           [-1, 1, -1],
                           [0, 1, 0]])
-    
+
     endpoint2 = np.array([[0, 1, 0],
                           [-1, 1, -1],
                           [-1, -1, -1]])
-    
+
     endpoint4 = np.array([[0, -1, -1],
                           [1, 1, -1],
                           [0, -1, -1]])
-    
+
     endpoint5 = np.array([[-1, -1, 0],
                           [-1, 1, 1],
                           [-1, -1, 0]])
-    
+
     endpoint3 = np.array([[-1, -1, 1],
                           [-1, 1, -1],
                           [-1, -1, -1]])
-    
+
     endpoint6 = np.array([[-1, -1, -1],
                           [-1, 1, -1],
                           [1, -1, -1]])
-    
+
     endpoint7 = np.array([[-1, -1, -1],
                           [-1, 1, -1],
                           [-1, 1, -1]])
-    
+
     endpoint8 = np.array([[1, -1, -1],
                           [-1, 1, -1],
                           [-1, -1, -1]])
-    
-    
+
     for i in range(0, num_it):
         ep1 = skel - cv2.morphologyEx(skel, cv2.MORPH_HITMISS, endpoint1)
         ep2 = ep1 - cv2.morphologyEx(ep1, cv2.MORPH_HITMISS, endpoint2)
@@ -302,51 +303,51 @@ def prune(skel, num_it): ## Removes branches with length lower than num_it
         ep7 = ep6 - cv2.morphologyEx(ep6, cv2.MORPH_HITMISS, endpoint7)
         ep8 = ep7 - cv2.morphologyEx(ep7, cv2.MORPH_HITMISS, endpoint8)
         skel = ep8
-        
+
     end = endPoints(skel)
     kernel_size = 3
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(kernel_size,kernel_size))
-    
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
+
     for i in range(0, num_it):
         end = cv2.dilate(end, kernel)
         end = cv2.bitwise_and(end, orig)
-        
+
     return cv2.bitwise_or(end, skel)
 
 
 def endPoints(skel):
-    endpoint1=np.array([[1, -1, -1],
-                        [-1, 1, -1],
-                        [-1, -1, -1]])
-    
-    endpoint2=np.array([[-1, 1, -1],
-                        [-1, 1, -1],
-                        [-1, -1, -1]])
-    
-    endpoint3=np.array([[-1, -1, 1],
-                        [-1, 1, -1],
-                        [-1, -1, -1]])
-    
-    endpoint4=np.array([[-1, -1, -1],
-                        [1, 1, -1],
-                        [-1, -1, -1]])
-    
-    endpoint5=np.array([[-1, -1, -1],
-                        [-1, 1, 1],
-                        [-1, -1, -1]])
-    
-    endpoint6=np.array([[-1, -1, -1],
-                        [-1, 1, -1],
-                        [1, -1, -1]])
-    
-    endpoint7=np.array([[-1, -1, -1],
-                        [-1, 1, -1],
-                        [-1, 1, -1]])
-    
-    endpoint8=np.array([[-1, -1, -1],
-                        [-1, 1, -1],
-                        [-1, -1, 1]])
-    
+    endpoint1 = np.array([[1, -1, -1],
+                          [-1, 1, -1],
+                          [-1, -1, -1]])
+
+    endpoint2 = np.array([[-1, 1, -1],
+                          [-1, 1, -1],
+                          [-1, -1, -1]])
+
+    endpoint3 = np.array([[-1, -1, 1],
+                          [-1, 1, -1],
+                          [-1, -1, -1]])
+
+    endpoint4 = np.array([[-1, -1, -1],
+                          [1, 1, -1],
+                          [-1, -1, -1]])
+
+    endpoint5 = np.array([[-1, -1, -1],
+                          [-1, 1, 1],
+                          [-1, -1, -1]])
+
+    endpoint6 = np.array([[-1, -1, -1],
+                          [-1, 1, -1],
+                          [1, -1, -1]])
+
+    endpoint7 = np.array([[-1, -1, -1],
+                          [-1, 1, -1],
+                          [-1, 1, -1]])
+
+    endpoint8 = np.array([[-1, -1, -1],
+                          [-1, 1, -1],
+                          [-1, -1, 1]])
+
     ep1 = cv2.morphologyEx(skel, cv2.MORPH_HITMISS, endpoint1)
     ep2 = cv2.morphologyEx(skel, cv2.MORPH_HITMISS, endpoint2)
     ep3 = cv2.morphologyEx(skel, cv2.MORPH_HITMISS, endpoint3)
@@ -355,49 +356,49 @@ def endPoints(skel):
     ep6 = cv2.morphologyEx(skel, cv2.MORPH_HITMISS, endpoint6)
     ep7 = cv2.morphologyEx(skel, cv2.MORPH_HITMISS, endpoint7)
     ep8 = cv2.morphologyEx(skel, cv2.MORPH_HITMISS, endpoint8)
-    
-    ep = ep1+ep2+ep3+ep4+ep5+ep6+ep7+ep8
+
+    ep = ep1 + ep2 + ep3 + ep4 + ep5 + ep6 + ep7 + ep8
     return ep
 
 
 def skeleton_nodes(ske):
     branch = branchedPoints(ske)
     end = endPoints(ske)
-    
+
     bp = np.where(branch == 1)
     bnodes = []
     for i in range(len(bp[0])):
-        bnodes.append([bp[1][i],bp[0][i]])
-    
+        bnodes.append([bp[1][i], bp[0][i]])
+
     ep = np.where(end == 1)
     enodes = []
     for i in range(len(ep[0])):
-        enodes.append([ep[1][i],ep[0][i]])
-    
+        enodes.append([ep[1][i], ep[0][i]])
+
     return np.array(bnodes), np.array(enodes)
 
 
 def branchedPoints(skel):
-    X=[]
-    #cross X
+    X = []
+    # cross X
     X0 = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
     X1 = np.array([[1, 0, 1], [0, 1, 0], [1, 0, 1]])
     X.append(X0)
     X.append(X1)
-    
-    #T like
-    T=[]
-    T0=np.array([[2, 1, 2], 
-                 [1, 1, 1], 
-                 [2, 2, 2]]) # T0 contains X0
-    T1=np.array([[1, 2, 1], [2, 1, 2], [1, 2, 2]]) # T1 contains X1
-    T2=np.array([[2, 1, 2], [1, 1, 2], [2, 1, 2]])
-    T3=np.array([[1, 2, 2], [2, 1, 2], [1, 2, 1]])
-    T4=np.array([[2, 2, 2], [1, 1, 1], [2, 1, 2]])
-    T5=np.array([[2, 2, 1], [2, 1, 2], [1, 2, 1]])
-    T6=np.array([[2, 1, 2], [2, 1, 1], [2, 1, 2]])
-    T7=np.array([[1, 2, 1], [2, 1, 2], [2, 2, 1]])
-    
+
+    # T like
+    T = []
+    T0 = np.array([[2, 1, 2],
+                   [1, 1, 1],
+                   [2, 2, 2]])  # T0 contains X0
+    T1 = np.array([[1, 2, 1], [2, 1, 2], [1, 2, 2]])  # T1 contains X1
+    T2 = np.array([[2, 1, 2], [1, 1, 2], [2, 1, 2]])
+    T3 = np.array([[1, 2, 2], [2, 1, 2], [1, 2, 1]])
+    T4 = np.array([[2, 2, 2], [1, 1, 1], [2, 1, 2]])
+    T5 = np.array([[2, 2, 1], [2, 1, 2], [1, 2, 1]])
+    T6 = np.array([[2, 1, 2], [2, 1, 1], [2, 1, 2]])
+    T7 = np.array([[1, 2, 1], [2, 1, 2], [2, 2, 1]])
+
     T.append(T0)
     T.append(T1)
     T.append(T2)
@@ -406,18 +407,18 @@ def branchedPoints(skel):
     T.append(T5)
     T.append(T6)
     T.append(T7)
-    
-    #Y like
-    Y=[]
-    Y0=np.array([[1, 0, 1], [0, 1, 0], [2, 1, 2]])
-    Y1=np.array([[0, 1, 0], [1, 1, 2], [0, 2, 1]])
-    Y2=np.array([[1, 0, 2], [0, 1, 1], [1, 0, 2]])
-    Y3=np.array([[0, 2, 1], [1, 1, 2], [0, 1, 0]])
-    Y4=np.array([[2, 1, 2], [0, 1, 0], [1, 0, 1]])
+
+    # Y like
+    Y = []
+    Y0 = np.array([[1, 0, 1], [0, 1, 0], [2, 1, 2]])
+    Y1 = np.array([[0, 1, 0], [1, 1, 2], [0, 2, 1]])
+    Y2 = np.array([[1, 0, 2], [0, 1, 1], [1, 0, 2]])
+    Y3 = np.array([[0, 2, 1], [1, 1, 2], [0, 1, 0]])
+    Y4 = np.array([[2, 1, 2], [0, 1, 0], [1, 0, 1]])
     Y5 = np.rot90(Y3)
     Y6 = np.rot90(Y4)
     Y7 = np.rot90(Y5)
-    
+
     Y.append(Y0)
     Y.append(Y1)
     Y.append(Y2)
@@ -426,7 +427,7 @@ def branchedPoints(skel):
     Y.append(Y5)
     Y.append(Y6)
     Y.append(Y7)
-    
+
     bp = np.zeros(skel.shape, dtype=int)
     for x in X:
         bp = bp + cv2.morphologyEx(skel, cv2.MORPH_HITMISS, x)
@@ -434,5 +435,5 @@ def branchedPoints(skel):
         bp = bp + cv2.morphologyEx(skel, cv2.MORPH_HITMISS, y)
     for t in T:
         bp = bp + cv2.morphologyEx(skel, cv2.MORPH_HITMISS, t)
-        
+
     return bp

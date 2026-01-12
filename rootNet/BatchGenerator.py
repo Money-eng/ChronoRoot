@@ -25,19 +25,20 @@ import cv2
 
 
 def adjust_gamma(image, gamma=1.0):
-	# build a lookup table mapping the pixel values [0, 255] to
-	# their adjusted gamma values
-	invGamma = 1.0 / gamma
-	table = np.array([((i / 255.0) ** invGamma) * 255
-		for i in np.arange(0, 256)]).astype("uint8")
- 
-	# apply gamma correction using the lookup table
-	return np.float32(cv2.LUT(image.astype('uint8'), table))
+    # build a lookup table mapping the pixel values [0, 255] to
+    # their adjusted gamma values
+    invGamma = 1.0 / gamma
+    table = np.array([((i / 255.0) ** invGamma) * 255
+                      for i in np.arange(0, 256)]).astype("uint8")
+
+    # apply gamma correction using the lookup table
+    return np.float32(cv2.LUT(image.astype('uint8'), table))
 
 
 """ #################################################################################################################
                                               BatchGenerator Class
     ################################################################################################################# """
+
 
 class BatchGenerator:
     """
@@ -101,7 +102,7 @@ class BatchGenerator:
                    updateCNNWeights(data)
     """
 
-    def __init__(self, confTrain, confModel, maxQueueSize = 50, infiniteLoop = False):
+    def __init__(self, confTrain, confModel, maxQueueSize=50, infiniteLoop=False):
         """
             Creates a batch generator.
 
@@ -150,7 +151,9 @@ class BatchGenerator:
             self.generateBatchesForOneEpoch()
             self.currentEpoch += 1
 
-        logging.debug(self.id + " The batch generation process finished. Elements still in the queue before finishing: %s. The queue will be destroyed." % str(self.getNumBatchesInQueue()))
+        logging.debug(
+            self.id + " The batch generation process finished. Elements still in the queue before finishing: %s. The queue will be destroyed." % str(
+                self.getNumBatchesInQueue()))
 
     def generateBatches(self):
         """
@@ -180,7 +183,7 @@ class BatchGenerator:
         """
         return self.queue.qsize()
 
-    def finish(self, delay = .5):
+    def finish(self, delay=.5):
         """
             It will interrupt the batch generation process, even if there are still batches to be created.
             If the batch generator is currently producing a batch, then it will stop after finishing that batch.
@@ -194,7 +197,9 @@ class BatchGenerator:
                         the queue is empty, the batch generation process is done.
         """
         self.keepOnRunning = False
-        logging.debug(self.id + " Stopping batch generator. Cleaning the queue which currently contains %s elements ..." % str(self.queue.qsize()))
+        logging.debug(
+            self.id + " Stopping batch generator. Cleaning the queue which currently contains %s elements ..." % str(
+                self.queue.qsize()))
 
         while not self.queue.empty():
             self.queue.get_nowait()
@@ -222,12 +227,15 @@ class BatchGenerator:
 """ #################################################################################################################
                                               Simple2DBatchGeneratorFromTensors Class
     ################################################################################################################# """
+
+
 class Patch2DBatchGeneratorFromTensors(BatchGenerator):
     """
         2D Patch based batch generator from images stored in a Numpy Tensor.
     """
 
-    def __init__(self, confTrain, data, gt, random_state = None, augment = False, indicesToSampleFrom = None, maxQueueSize = 5, infiniteLoop=False):
+    def __init__(self, confTrain, data, gt, random_state=None, augment=False, indicesToSampleFrom=None, maxQueueSize=5,
+                 infiniteLoop=False):
         """
         It creates a patch based 2D generator
 
@@ -240,7 +248,7 @@ class Patch2DBatchGeneratorFromTensors(BatchGenerator):
 
         :param maxQueueSize:
         """
-        
+
         if indicesToSampleFrom is None:
             self.indicesToSampleFrom = list(range(len(data)))
         else:
@@ -254,51 +262,50 @@ class Patch2DBatchGeneratorFromTensors(BatchGenerator):
             self.random_state = random_state
         else:
             self.random_state = np.random.RandomState(0)
-            
+
         self.i = 0
         self.n = len(data)
-        #print("Len data", self.n)
+        # print("Len data", self.n)
 
-    def _augment(self, image, label):    
+    def _augment(self, image, label):
         batchSize = self.confTrain['batchSize']
-        
-        for i in range(0,batchSize):
 
-            coin = self.random_state.uniform(0,1)
-            if coin < 0.5:        
-                image[i,:,:,0] = cv2.flip(image[i,:,:,0],1)
-                label[i,:,:,:] = cv2.flip(label[i,:,:,:].astype('uint8'),1).astype('bool')
-            
+        for i in range(0, batchSize):
 
-            coin = self.random_state.uniform(0,1)
-            if coin < 0.75:    
-                value = self.random_state.uniform(0.75,1.25)
-                image[i,:,:,0] = adjust_gamma(image[i,:,:,0], value)
-            
-            coin = self.random_state.uniform(0,1)
+            coin = self.random_state.uniform(0, 1)
+            if coin < 0.5:
+                image[i, :, :, 0] = cv2.flip(image[i, :, :, 0], 1)
+                label[i, :, :, :] = cv2.flip(label[i, :, :, :].astype('uint8'), 1).astype('bool')
+
+            coin = self.random_state.uniform(0, 1)
+            if coin < 0.75:
+                value = self.random_state.uniform(0.75, 1.25)
+                image[i, :, :, 0] = adjust_gamma(image[i, :, :, 0], value)
+
+            coin = self.random_state.uniform(0, 1)
             if coin < 0.15:
-                image[i,:,:,0] = cv2.GaussianBlur(image[i,:,:,0],(5,5),0)
+                image[i, :, :, 0] = cv2.GaussianBlur(image[i, :, :, 0], (5, 5), 0)
             else:
                 if coin < 0.30:
-                    image[i,:,:,0] = cv2.medianBlur(image[i,:,:,0].astype('uint8'), 9).astype('float32')
+                    image[i, :, :, 0] = cv2.medianBlur(image[i, :, :, 0].astype('uint8'), 9).astype('float32')
 
-            coin = self.random_state.uniform(0,1)
+            coin = self.random_state.uniform(0, 1)
             if coin < 0.25:
-                noise = self.random_state.randn(image.shape[1],image.shape[2]).astype('float32')*5
-                image[i,:,:,0] = cv2.add(image[i,:,:,0], noise)
-                image[i,:,:,0] = np.clip(image[i,:,:,0], 0, 255) # make sure values are in range
-         
+                noise = self.random_state.randn(image.shape[1], image.shape[2]).astype('float32') * 5
+                image[i, :, :, 0] = cv2.add(image[i, :, :, 0], noise)
+                image[i, :, :, 0] = np.clip(image[i, :, :, 0], 0, 255)  # make sure values are in range
+
         return image, label
-    
+
     def generateNRandomPatchs(self):
         sampledImg = self.indicesToSampleFrom[self.i]
-        
+
         image = self.data[sampledImg]
         label = self.gt[sampledImg]
-               
-        imgShape = image.shape[0:2]        
+
+        imgShape = image.shape[0:2]
         tileSize = self.confTrain['tileSize']
-        
+
         # Calculate the offsets
         tileOffset = [x // 2 for x in tileSize]
         extraTileOffset = [x % 2 for x in tileSize]
@@ -306,57 +313,58 @@ class Patch2DBatchGeneratorFromTensors(BatchGenerator):
         # Choose the random center from the possible values
         p0 = [x // 2 for x in tileSize]
         p1 = [x - p0[i] - extraTileOffset[i] for i, x in enumerate(imgShape)]
-        
-        a_center =  np.where(label[p0[0]:p1[0],p0[1]:p1[1],0] == 1)
+
+        a_center = np.where(label[p0[0]:p1[0], p0[1]:p1[1], 0] == 1)
         l_a = len(a_center[0])
-        
-        b_center =  np.where(label[p0[0]:p1[0],p0[1]:p1[1],1] == 1)
+
+        b_center = np.where(label[p0[0]:p1[0], p0[1]:p1[1], 1] == 1)
         l_b = len(b_center[0])
-        
+
         N = self.confTrain['batchSize']
         dataOut = np.ndarray(shape=(N, tileSize[0], tileSize[1], 1), dtype=np.float32)
         gtOut = np.ndarray(shape=(N, tileSize[0], tileSize[1], 2), dtype=np.float32)
 
         for i in range(0, N):
-            coin = self.random_state.uniform(0,1)
+            coin = self.random_state.uniform(0, 1)
             if coin > 0.5:
                 if l_a > 1:
-                    r = self.random_state.randint(0,l_a-1)
-                    samplingCenter = [a_center[0][r]+p0[0],a_center[1][r]+p0[1]]
+                    r = self.random_state.randint(0, l_a - 1)
+                    samplingCenter = [a_center[0][r] + p0[0], a_center[1][r] + p0[1]]
                 else:
-                    samplingCenter = [self.random_state.randint(p0[0], p1[0]), 
+                    samplingCenter = [self.random_state.randint(p0[0], p1[0]),
                                       self.random_state.randint(p0[1], p1[1])]
             else:
                 if l_b > 1:
-                    r = self.random_state.randint(0,l_b-1)
-                    samplingCenter = [b_center[0][r]+p0[0],b_center[1][r]+p0[1]]
+                    r = self.random_state.randint(0, l_b - 1)
+                    samplingCenter = [b_center[0][r] + p0[0], b_center[1][r] + p0[1]]
                 else:
-                    samplingCenter = [self.random_state.randint(p0[0], p1[0]), 
+                    samplingCenter = [self.random_state.randint(p0[0], p1[0]),
                                       self.random_state.randint(p0[1], p1[1])]
 
-            dataOut[i, :, :, 0] = image[samplingCenter[0] - tileOffset[0]:samplingCenter[0] + tileOffset[0] + extraTileOffset[0],
-                                        samplingCenter[1] - tileOffset[1]:samplingCenter[1] + tileOffset[1] + extraTileOffset[1]]
-    
-            gtOut[i, :, :, :] = label[samplingCenter[0] - tileOffset[0]:samplingCenter[0] + tileOffset[0] + extraTileOffset[0],
-                                      samplingCenter[1] - tileOffset[1]:samplingCenter[1] + tileOffset[1] + extraTileOffset[1]]
+            dataOut[i, :, :, 0] = image[
+                samplingCenter[0] - tileOffset[0]:samplingCenter[0] + tileOffset[0] + extraTileOffset[0],
+                samplingCenter[1] - tileOffset[1]:samplingCenter[1] + tileOffset[1] + extraTileOffset[1]]
+
+            gtOut[i, :, :, :] = label[
+                samplingCenter[0] - tileOffset[0]:samplingCenter[0] + tileOffset[0] + extraTileOffset[0],
+                samplingCenter[1] - tileOffset[1]:samplingCenter[1] + tileOffset[1] + extraTileOffset[1]]
 
         if self.augment:
-            dataOut, gtOut = self._augment(dataOut,gtOut)
-            
-        dataOut = dataOut/255.0
+            dataOut, gtOut = self._augment(dataOut, gtOut)
+
+        dataOut = dataOut / 255.0
 
         return dataOut, gtOut
-
 
     def generateSingleBatch(self):
 
         if self.i == 0:
-            #print('List shuffled.')
+            # print('List shuffled.')
             self.indicesToSampleFrom = self.random_state.permutation(self.n)
-        
+
         batch, gt = self.generateNRandomPatchs()
-        batch = np.clip(batch,0,1)
-        gt = np.clip(gt,0,1)
+        batch = np.clip(batch, 0, 1)
+        gt = np.clip(gt, 0, 1)
 
         self.i = (self.i + 1) % self.n
 
@@ -372,7 +380,8 @@ class Patch2DBatchGeneratorFromTensors_classic(BatchGenerator):
         2D Patch based batch generator from images stored in a Numpy Tensor.
     """
 
-    def __init__(self, confTrain, data, gt, random_state = None, indicesToSampleFrom = None, maxQueueSize = 5, infiniteLoop=False):
+    def __init__(self, confTrain, data, gt, random_state=None, indicesToSampleFrom=None, maxQueueSize=5,
+                 infiniteLoop=False):
         """
         It creates a patch based 2D generator
 
@@ -413,40 +422,43 @@ class Patch2DBatchGeneratorFromTensors_classic(BatchGenerator):
         # Choose the random center from the possible values
         p0 = [x // 2 for x in tileSize]
         p1 = [x - p0[i] - extraTileOffset[i] for i, x in enumerate(imgShape)]
-        
-        coin = self.random_state.uniform(0,1)
+
+        coin = self.random_state.uniform(0, 1)
         if coin < 0.5:
-            a =  np.where(self.gt[sampledImg][p0[0]:p1[0],p0[1]:p1[1],0] == 1)
+            a = np.where(self.gt[sampledImg][p0[0]:p1[0], p0[1]:p1[1], 0] == 1)
             l = len(a[0])
             if l > 1:
-                r = self.random_state.randint(0,l-1)
-                samplingCenter = [a[0][r]+p0[0],a[1][r]+p0[1]]
+                r = self.random_state.randint(0, l - 1)
+                samplingCenter = [a[0][r] + p0[0], a[1][r] + p0[1]]
             else:
-                samplingCenter = [self.random_state.randint(p0[0], p1[0]), 
+                samplingCenter = [self.random_state.randint(p0[0], p1[0]),
                                   self.random_state.randint(p0[1], p1[1])]
         else:
-            a =  np.where(self.gt[sampledImg][p0[0]:p1[0],p0[1]:p1[1],1] == 1)
+            a = np.where(self.gt[sampledImg][p0[0]:p1[0], p0[1]:p1[1], 1] == 1)
             l = len(a[0])
             if l > 1:
-                r = self.random_state.randint(0,l-1)
-                samplingCenter = [a[0][r]+p0[0],a[1][r]+p0[1]]
+                r = self.random_state.randint(0, l - 1)
+                samplingCenter = [a[0][r] + p0[0], a[1][r] + p0[1]]
             else:
-                samplingCenter = [self.random_state.randint(p0[0], p1[0]), 
+                samplingCenter = [self.random_state.randint(p0[0], p1[0]),
                                   self.random_state.randint(p0[1], p1[1])]
 
         dataOut = np.ndarray(shape=(1, tileSize[0], tileSize[1], 1),
-                      dtype=np.float32)
+                             dtype=np.float32)
         gtOut = np.ndarray(shape=(1, tileSize[0], tileSize[1], 2),
-                    dtype=np.float32)
+                           dtype=np.float32)
 
+        dataOut[0, :, :, 0] = self.data[sampledImg][
+                                  samplingCenter[0] - tileOffset[0]:samplingCenter[0] + tileOffset[0] + extraTileOffset[
+                                      0],
+                                  samplingCenter[1] - tileOffset[1]:samplingCenter[1] + tileOffset[1] + extraTileOffset[
+                                      1]] / 255.0
 
-        dataOut[0, :, :, 0] = self.data[sampledImg][samplingCenter[0] - tileOffset[0]:samplingCenter[0] + tileOffset[0] + extraTileOffset[0],
-                                                    samplingCenter[1] - tileOffset[1]:samplingCenter[1] + tileOffset[1] + extraTileOffset[1]]/255.0
+        gtOut[0, :, :, :] = self.gt[sampledImg][
+            samplingCenter[0] - tileOffset[0]:samplingCenter[0] + tileOffset[0] + extraTileOffset[0],
+            samplingCenter[1] - tileOffset[1]:samplingCenter[1] + tileOffset[1] + extraTileOffset[1]]
 
-        gtOut[0, :, :, :] = self.gt[sampledImg][samplingCenter[0] - tileOffset[0]:samplingCenter[0] + tileOffset[0] + extraTileOffset[0],
-                                                samplingCenter[1] - tileOffset[1]:samplingCenter[1] + tileOffset[1] + extraTileOffset[1]]
-
-        #print "Patch: Center " + str(samplingCenter) + "    Size: " + str(tileSize)
+        # print "Patch: Center " + str(samplingCenter) + "    Size: " + str(tileSize)
         return dataOut, gtOut
 
     def generateSingleBatch(self):
@@ -457,17 +469,19 @@ class Patch2DBatchGeneratorFromTensors_classic(BatchGenerator):
             :return: It returns the data and ground truth of a complete batch as data, gt. These structures are theano-compatible with shape:
                         np.ndarray(shape=(self.confTrain['batchSizeTraining'], self.numChannels, tileSize, tileSize, tileSize), dtype=np.float32)
         """
-        
+
         batchSize = self.confTrain['batchSize']
 
-        batch = np.ndarray(shape=(batchSize, self.confTrain['tileSize'][0], self.confTrain['tileSize'][1], 1), dtype=np.float32)
-        gt =    np.ndarray(shape=(batchSize, self.confTrain['tileSize'][0], self.confTrain['tileSize'][1], 2), dtype=np.float32)
+        batch = np.ndarray(shape=(batchSize, self.confTrain['tileSize'][0], self.confTrain['tileSize'][1], 1),
+                           dtype=np.float32)
+        gt = np.ndarray(shape=(batchSize, self.confTrain['tileSize'][0], self.confTrain['tileSize'][1], 2),
+                        dtype=np.float32)
 
         for i in range(0, batchSize):
             batch[i, :, :, :], gt[i, :, :, :] = self.generateRandomPatch()
-	
-        batch = np.clip(batch,0,1)
-        gt = np.clip(gt,0,1)
+
+        batch = np.clip(batch, 0, 1)
+        gt = np.clip(gt, 0, 1)
         return batch, gt
 
     def generateBatchesForOneEpoch(self):

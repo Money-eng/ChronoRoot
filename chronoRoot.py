@@ -24,9 +24,9 @@ if __name__ == "__main__":
     file = exec(open('config.conf').read(), conf1)
     conf2 = {}
     file = exec(open('cnns.conf').read(), conf2)
-    
+
     conf = {**conf1, **conf2}
-    
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--savepath', type=str, help='Output directory', nargs="?")
     parser.add_argument('--imgpath', type=str, help='Input directory', nargs="?")
@@ -48,7 +48,7 @@ if __name__ == "__main__":
         pass
     else:
         conf['SegPath'] = args.segpath
-    
+
     conf.pop('__builtins__', None)
 
     PrepareAnalyzer(conf)

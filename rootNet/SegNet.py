@@ -18,7 +18,6 @@ def conv2d(incoming, num_filters, filter_size, stride=1, pad='SAME',
            weight_init=xavier_initializer(),
            bias_init=tf.constant_initializer(0.0),
            reuse=False, name="conv2d"):
-
     x = incoming
 
     input_shape = incoming.get_shape().as_list()
@@ -28,9 +27,9 @@ def conv2d(incoming, num_filters, filter_size, stride=1, pad='SAME',
 
     with tf.compat.v1.variable_scope(name, reuse=reuse):
         weight = tf.compat.v1.get_variable(name + "_weight", filter_shape,
-                                 initializer=weight_init)
+                                           initializer=weight_init)
         bias = tf.compat.v1.get_variable(name + "_bias", bias_shape,
-                               initializer=bias_init)
+                                         initializer=bias_init)
 
         conved = tf.nn.conv2d(x, weight, strides, pad)
         conved = tf.nn.bias_add(conved, bias)
@@ -78,19 +77,20 @@ def upsample(incoming, size, name='upsample'):
 def maxunpool2d(incoming, mask, stride=2, name='unpool'):
     x = incoming
 
-    input_shape = tf.shape(incoming) 
+    input_shape = tf.shape(incoming)
     batch_size = input_shape[0]
     height = input_shape[1]
     width = input_shape[2]
-    channels = incoming.get_shape().as_list()[3] # Les channels sont souvent fixes (64, 128...), on peut garder get_shape ici ou mettre tf.shape aussi
-    
+    channels = incoming.get_shape().as_list()[
+        3]  # Les channels sont souvent fixes (64, 128...), on peut garder get_shape ici ou mettre tf.shape aussi
+
     # Calcul de la forme de sortie dynamique
     out_height = height * stride
     out_width = width * stride
-    
+
     output_shape = tf.stack([batch_size, out_height, out_width, channels])
     flat_output_shape = tf.stack([batch_size, out_height * out_width * channels])
-    
+
     with tf.name_scope(name):
         flat_input_size = tf.size(x)
         limit = tf.cast(output_shape[0], dtype=mask.dtype)
@@ -113,7 +113,6 @@ def batch_norm(incoming, phase_train,
                beta_init=tf.constant_initializer(0.0),
                gamma_init=tf.random_normal_initializer(mean=1.0, stddev=0.002),
                reuse=False, name='batch_norm'):
-
     x = incoming
 
     input_shape = incoming.get_shape().as_list()
@@ -121,12 +120,12 @@ def batch_norm(incoming, phase_train,
     depth = input_shape[-1]
     with tf.compat.v1.variable_scope(name, reuse=reuse):
         beta = tf.compat.v1.get_variable(name + '_beta', shape=depth,
-                               initializer=beta_init, trainable=True)
+                                         initializer=beta_init, trainable=True)
         gamma = tf.compat.v1.get_variable(name + '_gamma', shape=depth,
-                                initializer=gamma_init, trainable=True)
+                                          initializer=gamma_init, trainable=True)
 
         axes = list(range(len(input_shape) - 1))
-        batch_mean, batch_variance = tf.nn.moments(incoming, axes) # channel
+        batch_mean, batch_variance = tf.nn.moments(incoming, axes)  # channel
         moving_mean = tf.compat.v1.get_variable(
             name + '_moving_mean', shape=depth,
             initializer=tf.zeros_initializer(),
@@ -140,10 +139,10 @@ def batch_norm(incoming, phase_train,
             update_moving_mean = moving_averages.assign_moving_average(
                 moving_mean, batch_mean, decay, zero_debias=False)
             update_moving_variance = moving_averages.assign_moving_average(
-                moving_variance, batch_variance,  decay, zero_debias=False)
+                moving_variance, batch_variance, decay, zero_debias=False)
 
             with tf.control_dependencies(
-                [update_moving_mean, update_moving_variance]):
+                    [update_moving_mean, update_moving_variance]):
                 return tf.identity(batch_mean), tf.identity(batch_variance)
 
         mean, variance = tf.cond(phase_train,
@@ -216,41 +215,44 @@ def decoder(inputs, mask, phase_train, name='decoder'):
 
 
 class SegNet(object):
-  """
-    Input has to be multiple of 4 (CHECK THIS).
-  """
-  def __init__(self, name, finetuneLayers = None, dropout = 0.5):
-    self.name = name
-    self.reuse = None
-    self.finetuneLayers = finetuneLayers
-    self.dropout = dropout
+    """
+      Input has to be multiple of 4 (CHECK THIS).
+    """
 
-  def __call__(self, x, isTrain):
-    "If finetuneLayers is None, all the layers will be finetuned. Otherwise, only those which match the names in finetuneLayers list will be trained."
+    def __init__(self, name, finetuneLayers=None, dropout=0.5):
+        self.name = name
+        self.reuse = None
+        self.finetuneLayers = finetuneLayers
+        self.dropout = dropout
 
-    with tf.compat.v1.variable_scope(self.name, reuse=self.reuse):
+    def __call__(self, x, isTrain):
+        "If finetuneLayers is None, all the layers will be finetuned. Otherwise, only those which match the names in finetuneLayers list will be trained."
 
-      h, mask = encoder(x, isTrain, name='encoder')
-      conv_out = decoder(h, mask, isTrain, name='decoder')
-      
-    if self.reuse is None:
+        with tf.compat.v1.variable_scope(self.name, reuse=self.reuse):
 
-      if self.finetuneLayers is None:
-          self.varList = tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.GLOBAL_VARIABLES, scope=self.name)
-      else:
-          self.varList = []
+            h, mask = encoder(x, isTrain, name='encoder')
+            conv_out = decoder(h, mask, isTrain, name='decoder')
 
-          for scope in self.finetuneLayers:
-            self.varList.extend(tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.GLOBAL_VARIABLES, scope=scope))
+        if self.reuse is None:
 
-      self.saver = tf.compat.v1.train.Saver(tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.GLOBAL_VARIABLES, scope=self.name), max_to_keep=None)
+            if self.finetuneLayers is None:
+                self.varList = tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.GLOBAL_VARIABLES, scope=self.name)
+            else:
+                self.varList = []
 
-      self.reuse = True
+                for scope in self.finetuneLayers:
+                    self.varList.extend(
+                        tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.GLOBAL_VARIABLES, scope=scope))
 
-    return conv_out
+            self.saver = tf.compat.v1.train.Saver(
+                tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.GLOBAL_VARIABLES, scope=self.name), max_to_keep=None)
 
-  def save(self, sess, ckpt_path):
-    self.saver.save(sess, ckpt_path)
+            self.reuse = True
 
-  def restore(self, sess, ckpt_path):
-    self.saver.restore(sess, ckpt_path)
+        return conv_out
+
+    def save(self, sess, ckpt_path):
+        self.saver.save(sess, ckpt_path)
+
+    def restore(self, sess, ckpt_path):
+        self.saver.restore(sess, ckpt_path)

@@ -41,13 +41,14 @@ HEAVY_METRICS_FREQ = 5
 
 last_f1_score = 0.0
 
+
 def load_folder(folder_path, img_suffix, mask_suffix, desc):
     if not os.path.exists(folder_path):
         print(f"ATTENTION: Le dossier {folder_path} n'existe pas !")
         return [], []
 
     provider = MPImageDataProvider(search_path=[
-                                   folder_path], data_suffix=img_suffix, mask_suffix=mask_suffix, augment=False, shuffle_data=False)
+        folder_path], data_suffix=img_suffix, mask_suffix=mask_suffix, augment=False, shuffle_data=False)
 
     data = []
     gt = []
@@ -102,64 +103,65 @@ def make_summary(name, value):
 
 def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, model_name, do_heavy, use_crf=True):
     metrics_sum = {
-        'loss': [], 'f1': [], 'precision': [], 'recall': [], 'iou': [], 'dice': [], 
-        'dice_gpu': [], 'auc_gpu': [], 'precision_gpu': [], 'recall_gpu': [], 
-        'betti_0_err': [], 'betti_1_err': [], 'betti_0_abs_err': [], 'betti_1_abs_err': [], 
+        'loss': [], 'f1': [], 'precision': [], 'recall': [], 'iou': [], 'dice': [],
+        'dice_gpu': [], 'auc_gpu': [], 'precision_gpu': [], 'recall_gpu': [],
+        'betti_0_err': [], 'betti_1_err': [], 'betti_0_abs_err': [], 'betti_1_abs_err': [],
         'centerline_distance': [], 'hausdorff_95': [], 'hausdorff_max': [], 'surface_dice_1mm': []
     }
-    
+
     global last_f1_score
-    
+
     if do_heavy:
         heavy_keys = ['apls', 'apls_recall', 'apls_precision']
         for k in heavy_keys:
             metrics_sum[k] = []
-    
+
     normalized_data_val = [(img.astype(np.float32) / 255.0)[:, :, np.newaxis] for img in data_val]
-    
-    #last_processed_img = None
+
+    # last_processed_img = None
     last_processed_gt = None
     last_processed_pred = None
 
     futures_list = []
-    
+
     print(f"Validation Epoch {epoch} (Heavy={do_heavy})...")
 
     with ProcessPoolExecutor() as executor:
-        
-        for i, (img, gt) in tqdm.tqdm(enumerate(zip(normalized_data_val, gt_val)), total=len(data_val), desc="GPU Inference"):
-            
+
+        for i, (img, gt) in tqdm.tqdm(enumerate(zip(normalized_data_val, gt_val)), total=len(data_val),
+                                      desc="GPU Inference"):
+
             img_input = img[np.newaxis, :, :, :]
-            
+
             loss, diceg, aucg, precg, recg = net.deploy(img_input, gt[np.newaxis, :, :, :], phase=0)
             metrics_sum['loss'].append(loss)
             metrics_sum['dice_gpu'].append(diceg)
             metrics_sum['auc_gpu'].append(aucg)
             metrics_sum['precision_gpu'].append(precg)
             metrics_sum['recall_gpu'].append(recg)
-            
+
             pred_prob = net.segment(img_input)
-            
-            future = executor.submit(process_single_validation_item, 
+
+            future = executor.submit(process_single_validation_item,
                                      (pred_prob.copy(), img.copy(), gt.copy(), conf, use_crf, False))
             futures_list.append(future)
-            
+
             if i == len(data_val) - 1:
-                #last_processed_img = img
+                # last_processed_img = img
                 last_processed_gt = gt
-        
+
         print("Attente des workers CPU...")
         for future in tqdm.tqdm(as_completed(futures_list), total=len(futures_list), desc="CPU Metrics"):
             try:
                 res, pred_mask_result, _ = future.result()
-                
+
                 metrics_sum['loss'].append(0.0)
                 for k, v in res.items():
                     if k in metrics_sum:
                         metrics_sum[k].append(v)
-                
+
                 last_processed_pred = pred_mask_result
-                
+
             except Exception as e:
                 print(f"Erreur dans un worker : {e}")
                 import traceback
@@ -181,29 +183,30 @@ def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, model_
 
     current_f1 = avg_metrics.get('f1', 0.0)
     last_f1_score = current_f1
-    
+
     return avg_metrics
 
-def process_single_validation_item(args):   
+
+def process_single_validation_item(args):
     pred_prob, img, gt, conf, use_crf, do_heavy = args
 
     H, W = pred_prob[0].shape[:2]
-    
+
     if use_crf:
         img_squeeze = np.squeeze(img)
         img_uint8 = (img_squeeze * 255.0).astype(np.uint8)
         image_rgb = cv2.cvtColor(img_uint8, cv2.COLOR_GRAY2RGB)
         image_rgb = np.ascontiguousarray(image_rgb)
-        
+
         unary = np.transpose(pred_prob[0], (2, 0, 1))
 
         unary = -np.log(np.clip(unary, 1e-5, 1.0))
-        
+
         unary = unary.reshape(2, -1)
         unary = np.ascontiguousarray(unary)
-        
+
         d = dcrf.DenseCRF2D(W, H, 2)
-        
+
         d.setUnaryEnergy(unary)
         d.addPairwiseBilateral(sxy=5, srgb=3, rgbim=image_rgb, compat=1)
         Q = d.inference(1)
@@ -219,6 +222,7 @@ def process_single_validation_item(args):
     results = compute_advanced_metrics(pred_mask, gt_mask, do_heavy)
 
     return results, pred_mask, gt_mask
+
 
 def train_one_model(model_name, d_train, g_train, d_val, g_val):
     print(f"=== Entraînement : {model_name} ===")
@@ -248,7 +252,7 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
 
     config_proto = tf.compat.v1.ConfigProto()
     config_proto.gpu_options.allow_growth = True
-    
+
     load_from_last = False
     with tf.compat.v1.Session(config=config_proto) as sess:
         net = RootNet(sess, current_conf, model_name, isTrain=True)
@@ -267,7 +271,7 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
                     checkpoint_exists = True
 
             if checkpoint_exists:
-                tqdm.tqdm.write(f" -> Checkpoint for epoch {epoch+1} already exists. Loading model...")
+                tqdm.tqdm.write(f" -> Checkpoint for epoch {epoch + 1} already exists. Loading model...")
                 load_from_last = True
                 continue
                 # net.restore(epoch_save_dir)
@@ -277,10 +281,10 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
                 # assuming last epoch dir exists
                 print(f" -> Chargement du checkpoint de l'époque {last_epoch}...")
                 net.restore(last_epoch_dir)
-                    
+
             epoch_loss = 0.0
-            batch_pbar = tqdm.tqdm(range(current_conf['iterPerEpoch']), desc=f"Epoch {epoch+1}", leave=False)
-            
+            batch_pbar = tqdm.tqdm(range(current_conf['iterPerEpoch']), desc=f"Epoch {epoch + 1}", leave=False)
+
             for _ in batch_pbar:
                 try:
                     batch_x, batch_y = batch_gen.queue.get(timeout=60)
@@ -297,43 +301,45 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
                     batch_pbar.set_postfix({'loss': f"{loss:.4f}"})
                 else:
                     loss = net.fit(batch_x, batch_y, learning_rate=current_lr, phase=True)
-                    
+
                     epoch_loss += loss
                     train_writer.add_summary(make_summary('batch_loss', loss), global_step)
                     global_step += 1
-                    
+
                     batch_pbar.set_postfix({'loss': f"{loss:.4f}", 'lr': f"{current_lr:.1e}"})
 
             avg_train_loss = epoch_loss / current_conf['iterPerEpoch']
             train_writer.add_summary(make_summary('epoch_loss', avg_train_loss), epoch)
             train_writer.add_summary(make_summary('learning_rate', current_lr), epoch)
 
-            epoch_dir = os.path.join(ckpt_base_path, f"epoch_{epoch+1}")
+            epoch_dir = os.path.join(ckpt_base_path, f"epoch_{epoch + 1}")
             os.makedirs(epoch_dir, exist_ok=True)
-            
+
             if len(d_val) > 0:
                 global last_f1_score
-                do_heavy = False #last_f1_score > 0.5 and ((epoch + 1) % HEAVY_METRICS_FREQ == 0) or ((epoch + 1) == current_conf['numEpochs'])
-                
-                metrics = evaluate_validation(sess, net, d_val, g_val, current_conf, val_writer, epoch, model_name, do_heavy)
-                print(f"Metriques de validation à la fin de l'époque {epoch+1} : {metrics}")
-                
-                if not checkpoint_exists: 
-                    val_dice = metrics['dice'] 
-                    
+                do_heavy = False  # last_f1_score > 0.5 and ((epoch + 1) % HEAVY_METRICS_FREQ == 0) or ((epoch + 1) == current_conf['numEpochs'])
+
+                metrics = evaluate_validation(sess, net, d_val, g_val, current_conf, val_writer, epoch, model_name,
+                                              do_heavy)
+                print(f"Metriques de validation à la fin de l'époque {epoch + 1} : {metrics}")
+
+                if not checkpoint_exists:
+                    val_dice = metrics['dice']
+
                     if val_dice > (best_val_dice + 1e-4):
                         best_val_dice = val_dice
-                        lr_wait = 0 
+                        lr_wait = 0
                     else:
                         lr_wait += 1
                         print(f" -> Validation loss ne s'améliore pas (Patience: {lr_wait}/{lr_patience})")
-                        
+
                         if lr_wait >= lr_patience:
                             old_lr = current_lr
                             current_lr = max(current_lr * lr_factor, lr_min)
-                            lr_wait = 0 
+                            lr_wait = 0
                             if current_lr < old_lr:
-                                print(f"⚠️ PLATEAU DÉTECTÉ : Réduction du Learning Rate de {old_lr:.1e} à {current_lr:.1e}")
+                                print(
+                                    f"⚠️ PLATEAU DÉTECTÉ : Réduction du Learning Rate de {old_lr:.1e} à {current_lr:.1e}")
 
             epoch_pbar.set_postfix({'Train Loss': f"{avg_train_loss:.4f}", 'Val Loss': f"{metrics.get('loss', 0):.4f}"})
 
@@ -343,6 +349,7 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
             val_writer.flush()
 
     batch_gen.finish()
+
 
 def main():
     parser = argparse.ArgumentParser()
