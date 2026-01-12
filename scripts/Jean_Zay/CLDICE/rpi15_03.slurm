@@ -17,4 +17,4 @@ source ~/.bashrc
 mamba activate chrono
 cd /lustre/fswork/projects/rech/vey/unq35lq/RSA_reconstruction/Method/ChronoRoot_CLDICE
 
-srun python3 ./segmentEnsembleCustom.py --input_dir /lustre/fsn1/projects/rech/vey/unq35lq/input_img/rpi15_2020-03-12_17-01/ --output_dir /lustre/fsn1/projects/rech/vey/unq35lq/output_inference_cldice/
+srun python3 ./segmentEnsembleCustom.py --input_dir /lustre/fsn1/projects/rech/vey/unq35lq/expe_rpi15/input_img/rpi15_2020-03-12_17-01/ --output_dir /lustre/fsn1/projects/rech/vey/unq35lq/expe_rpi15/output_inference_cldice/
