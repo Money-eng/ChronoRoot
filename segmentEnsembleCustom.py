@@ -259,12 +259,12 @@ def archive_manager_worker(task_queue):
             task_queue.task_done()
             break
             
-        source_dir, output_tar = task
+        source_dir, output_tar, delete_path = task # delete path should correspond to source_dir's parent folder
         try:
             cmd = ['tar', '-czf', output_tar, '-C', source_dir, '.']
             subprocess.check_call(cmd) # returns CallingProcessError if fails
             
-            shutil.rmtree(source_dir)
+            shutil.rmtree(delete_path)
             print(f"   [ARCHIVE OK] {os.path.basename(output_tar)}")
             
         except Exception as e:
@@ -350,6 +350,8 @@ if __name__ == "__main__":
         print(f"--- Start Epoch : {epoch_name} ---")
         epoch_full_folder = os.path.join(base_output_dir, epoch_name)
         mkdir(epoch_full_folder)
+        epoch_ensemble_folder = os.path.join(epoch_full_folder, "EnsembleResult")
+        mkdir(epoch_ensemble_folder)
         
         jobs_count = 0
         for sub in sub_dirs:
@@ -369,7 +371,7 @@ if __name__ == "__main__":
             # )
             
             # Use the archiver process to handle archiving
-            archive_queue.put( (epoch_full_folder, tar_path) )
+            archive_queue.put( (epoch_ensemble_folder, tar_path, epoch_full_folder) )
             print(f"   [ARCHIVE QUEUED] {epoch_name} -> {tar_path}")
             
     for _ in range(nb_gpus):
