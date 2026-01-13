@@ -75,7 +75,8 @@ def createResultFolder(conf):
             os.mkdir(f4)
         except:
             pass
-
+    else:
+        imagePath = None
     rsmlPath = os.path.join(saveFolder, "RSML")
     try:
         os.mkdir(rsmlPath)

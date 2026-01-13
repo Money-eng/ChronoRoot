@@ -8,6 +8,7 @@ import copy
 import multiprocessing
 import subprocess
 import shutil
+import re
 from concurrent.futures import ProcessPoolExecutor
 
 from .fileFunc import createResultFolder, loadPath
@@ -57,6 +58,9 @@ def process_plant_task(args):
     except subprocess.CalledProcessError as e:
         return f"Error archiving {save_path_plant}: {str(e)}"
     except Exception as e:
+        # remove folder if exists
+        if os.path.exists(save_path_plant):
+            shutil.rmtree(save_path_plant)
         return f"Error processing {save_path_plant}: {str(e)}"
 
 
@@ -85,15 +89,23 @@ def PrepareAnalyzer(conf):
         return
 
     epoch_folders = [f for f in os.listdir(seg_path) if os.path.isdir(os.path.join(seg_path, f))]
-    epoch_folders = sorted(epoch_folders, key=lambda x: int(x[6:]), reverse=True)
+
+    def get_epoch_number(folder_name):
+        # Cherche n'importe quel nombre dans le nom du dossier
+        match = re.search(r'(\d+)', folder_name)
+        return int(match.group(1)) if match else 0
+
+    epoch_folders = sorted(epoch_folders, key=get_epoch_number, reverse=False)
     
     # if epoch_folders is empty, it means there all tar.gz files such that epoch_X.tar.gz
     if not epoch_folders:
         all_files = os.listdir(seg_path)
-        epoch_folders = [f[:-7] for f in all_files if f.startswith('epoch_') and f.endswith('.tar.gz')]
+        epoch_folders = [f[:-7] for f in all_files if f.endswith('.tar.gz')]
         epoch_folders = sorted(epoch_folders, key=lambda x: int(x[6:]), reverse=True)
         global IS_TAR_GZ
         IS_TAR_GZ = True
+        
+    print(epoch_folders)
 
     tasks = []
     skipped_count = 0
@@ -136,6 +148,11 @@ def PrepareAnalyzer(conf):
                 result_file = os.path.join(save_path_plant, "Results.csv")
 
                 if os.path.exists(save_path_plant) and os.path.exists(result_file):
+                    skipped_count += 1
+                    continue
+                
+                archive_file = save_path_plant + ".tar.gz"
+                if os.path.exists(archive_file):
                     skipped_count += 1
                     continue
 
@@ -243,7 +260,8 @@ def ChronoRootAnalyzer(conf, images, segFiles, seed, bbox):
 
             image_name = getImgName(images[i], conf)
             saveProps(image_name, i, False, csv_writer, 0)
-            saveEmpty(image_name, imagePath, original, seg)
+            if conf['SaveImages']:
+                saveEmpty(image_name, imagePath, original, seg)
 
         print('Growth Begin')
 
@@ -264,7 +282,8 @@ def ChronoRootAnalyzer(conf, images, segFiles, seed, bbox):
         saveProps(image_name, i, grafo, csv_writer, numberLR)
 
         original = cv2.imread(images[i])[bbox[0]:bbox[1], bbox[2]:bbox[3]]
-        savePlotImages(image_name, imagePath, original, seg, grafo, ske2)
+        if conf['SaveImages']:
+            savePlotImages(image_name, imagePath, original, seg, grafo, ske2)
 
         segErrorFlag = False  # Previous time-step error
         trackCount = 0
@@ -310,7 +329,8 @@ def ChronoRootAnalyzer(conf, images, segFiles, seed, bbox):
             else:
                 image_name = getImgName(images[i], conf)
                 saveProps(image_name, i, False, csv_writer, 0)
-                saveEmpty(image_name, imagePath, original, seg)
+                if conf['SaveImages']:
+                    saveEmpty(image_name, imagePath, original, seg)
 
             segErrorFlag = errorFlag_
 
@@ -329,7 +349,8 @@ def ChronoRootAnalyzer(conf, images, segFiles, seed, bbox):
                     trackError = True
                     image_name = images[i].replace(conf['Path'], '').replace('/', '')
                     saveProps(image_name, i, False, csv_writer, 0)
-                    saveEmpty(image_name, imagePath, original, seg)
+                    if conf['SaveImages']:
+                        saveEmpty(image_name, imagePath, original, seg)
                 else:
                     rsmlTree, numberLR = createTree(conf, i, images, grafo, ske, ske2)
                     rsml = os.path.join(rsmlPath, image_name.replace(conf['FileExt'], '.rsml'))
@@ -339,7 +360,8 @@ def ChronoRootAnalyzer(conf, images, segFiles, seed, bbox):
                     saveProps(image_name, i, grafo, csv_writer, numberLR)
 
                     original = cv2.imread(images[i])[bbox[0]:bbox[1], bbox[2]:bbox[3]]
-                    savePlotImages(image_name, imagePath, original, seg, grafo, ske2)
+                    if conf['SaveImages']:
+                        savePlotImages(image_name, imagePath, original, seg, grafo, ske2)
 
             if trackError and trackCount > 5:
                 print('Analysis ended early at timestep', i, 'of', N)
