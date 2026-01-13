@@ -20,6 +20,7 @@ from .dataWork import dataWork
 
 cv2.setNumThreads(0)
 DEBUG = False
+IS_TAR_GZ = False
 
 
 def getImgName(image, conf):
@@ -85,6 +86,14 @@ def PrepareAnalyzer(conf):
 
     epoch_folders = [f for f in os.listdir(seg_path) if os.path.isdir(os.path.join(seg_path, f))]
     epoch_folders = sorted(epoch_folders, key=lambda x: int(x[6:]), reverse=True)
+    
+    # if epoch_folders is empty, it means there all tar.gz files such that epoch_X.tar.gz
+    if not epoch_folders:
+        all_files = os.listdir(seg_path)
+        epoch_folders = [f[:-7] for f in all_files if f.startswith('epoch_') and f.endswith('.tar.gz')]
+        epoch_folders = sorted(epoch_folders, key=lambda x: int(x[6:]), reverse=True)
+        global IS_TAR_GZ
+        IS_TAR_GZ = True
 
     tasks = []
     skipped_count = 0
@@ -94,7 +103,19 @@ def PrepareAnalyzer(conf):
         epoch_path = os.path.join(seg_path, epoch)
         save_epoch_path = os.path.join(save_path, epoch)
         os.makedirs(save_epoch_path, exist_ok=True)
-
+        if IS_TAR_GZ:
+            tar_gz_file = epoch_path + '.tar.gz'
+            os.makedirs(epoch_path, exist_ok=True)
+            
+            # if epoch_path is not empty, skip extraction
+            if os.listdir(epoch_path):
+                pass
+            else:
+                subprocess.run(
+                    ["tar", "-xzf", tar_gz_file, "-C", epoch_path],
+                    check=True
+                )
+            
         img_folders = [f for f in os.listdir(img_path) if os.path.isdir(os.path.join(img_path, f))]
 
         for img_folder in img_folders:
@@ -129,7 +150,7 @@ def PrepareAnalyzer(conf):
 
                 all_seg_files = loadPath(seg_path_folder, ext)
                 segFiles = [file for file in all_seg_files]
-
+                
                 if len(images) > 0 and len(segFiles) > 0:
                     task_args = (
                         conf,
