@@ -39,6 +39,7 @@ def process_plant_task(args):
     local_conf['Project'] = save_path_plant
 
     try:
+        os.makedirs(save_path_plant, exist_ok=True)
         ChronoRootAnalyzer(local_conf, images, segFiles, seed_pos_rel, roi_bbox)
 
         archive_name = f"{save_path_plant}.tar.gz"
@@ -88,98 +89,84 @@ def PrepareAnalyzer(conf):
         print(f"Cannot find the seed and ROI file at {csv_path}. Please check the path and try again.")
         return
 
-    epoch_folders = [f for f in os.listdir(seg_path) if os.path.isdir(os.path.join(seg_path, f))]
-
-    def get_epoch_number(folder_name):
-        # Cherche n'importe quel nombre dans le nom du dossier
-        match = re.search(r'(\d+)', folder_name)
-        return int(match.group(1)) if match else 0
-
-    epoch_folders = sorted(epoch_folders, key=get_epoch_number, reverse=False)
+    all_entries = os.listdir(seg_path)
+    epoch_numbers = set()
+    for entry in all_entries:
+        match = re.search(r'epoch_(\d+)', entry)
+        if match:
+            epoch_numbers.add(int(match.group(1)))
     
-    # if epoch_folders is empty, it means there all tar.gz files such that epoch_X.tar.gz
-    if not epoch_folders:
-        all_files = os.listdir(seg_path)
-        epoch_folders = [f[:-7] for f in all_files if f.endswith('.tar.gz')]
-        epoch_folders = sorted(epoch_folders, key=lambda x: int(x[6:]), reverse=True)
-        global IS_TAR_GZ
-        IS_TAR_GZ = True
-        
-    print(epoch_folders)
+    sorted_epochs = sorted(list(epoch_numbers))
+    print(f"Epochs detected : {sorted_epochs}")
 
     tasks = []
     skipped_count = 0
     print("Preparing tasks for analysis...")
 
-    for epoch in epoch_folders:
-        epoch_path = os.path.join(seg_path, epoch)
-        save_epoch_path = os.path.join(save_path, epoch)
-        os.makedirs(save_epoch_path, exist_ok=True)
-        if IS_TAR_GZ:
-            tar_gz_file = epoch_path + '.tar.gz'
+    for num in sorted_epochs:
+        epoch_name = f"epoch_{num}"
+        epoch_path = os.path.join(seg_path, epoch_name)
+        tar_gz_file = epoch_path + '.tar.gz'
+        save_epoch_path = os.path.join(save_path, epoch_name)
+
+        is_empty = not os.path.exists(epoch_path) or not os.listdir(epoch_path)
+        
+        if is_empty and os.path.exists(tar_gz_file):
+            print(f"Extraction de {tar_gz_file}...")
             os.makedirs(epoch_path, exist_ok=True)
-            
-            # if epoch_path is not empty, skip extraction
-            if os.listdir(epoch_path):
-                pass
-            else:
-                subprocess.run(
-                    ["tar", "-xzf", tar_gz_file, "-C", epoch_path],
-                    check=True
-                )
-            
+            subprocess.run(["tar", "-xzf", tar_gz_file, "-C", epoch_path], check=True)
+        elif is_empty and not os.path.exists(tar_gz_file):
+            print(f"No segmentation data found for {epoch_name}, skipping...")
+            continue
+
+        os.makedirs(save_epoch_path, exist_ok=True)
         img_folders = [f for f in os.listdir(img_path) if os.path.isdir(os.path.join(img_path, f))]
 
         for img_folder in img_folders:
             folder_num = int(img_folder)
-            seg_path_folder = os.path.join(epoch_path, "EnsembleResult", img_folder)
+            
+            path_v1 = os.path.join(epoch_path, "EnsembleResult", img_folder)
+            path_v2 = os.path.join(epoch_path, img_folder)
+            
+            if os.path.exists(path_v1):
+                seg_path_folder = path_v1
+            elif os.path.exists(path_v2):
+                seg_path_folder = path_v2
+            else:
+                if os.listdir(epoch_path): 
+                    print(f"Warning: No segmentation folder found for image folder {img_folder} in {epoch_name}")
+                continue
+            
             img_path_folder = os.path.join(img_path, img_folder)
             save_path_folder = os.path.join(save_epoch_path, img_folder)
-            os.makedirs(save_path_folder, exist_ok=True)
-
             box_row = seed_and_roi[seed_and_roi['Box'] == folder_num]
-            if box_row.empty:
-                continue
+            if box_row.empty: continue
 
             for _, row in box_row.iterrows():
                 plant_name = row['PlantName']
                 save_path_plant = os.path.join(save_path_folder, plant_name)
+                archive_file = save_path_plant + ".tar.gz"
 
-                result_file = os.path.join(save_path_plant, "Results.csv")
-
-                if os.path.exists(save_path_plant) and os.path.exists(result_file):
+                if os.path.exists(archive_file) or os.path.exists(os.path.join(save_path_plant, "Results.csv")):
                     skipped_count += 1
                     continue
-                
-                archive_file = save_path_plant + ".tar.gz"
-                if os.path.exists(archive_file):
-                    skipped_count += 1
+
+                ext = "*" + conf["FileExt"]
+                images = loadPath(img_path_folder, ext)
+                segFiles = loadPath(seg_path_folder, ext)
+
+                if len(images) == 0 or len(segFiles) == 0:
+                    if os.path.exists(seg_path_folder):
+                        print(f"Info : No segments found in {seg_path_folder} for plant {plant_name}")
                     continue
 
                 seed_pos = (row['seed_x'], row['seed_y'])
                 roi_bbox = (row['y_min'], row['y_max'], row['x_min'], row['x_max'])
                 seed_pos_rel = [seed_pos[0] - roi_bbox[2], seed_pos[1] - roi_bbox[0]]
 
-                ext = "*" + conf["FileExt"]
+                tasks.append((conf, images, segFiles, seed_pos_rel, np.array(roi_bbox), save_path_plant))
 
-                all_files = loadPath(img_path_folder, ext)
-                images = [file for file in all_files]
-
-                all_seg_files = loadPath(seg_path_folder, ext)
-                segFiles = [file for file in all_seg_files]
-                
-                if len(images) > 0 and len(segFiles) > 0:
-                    task_args = (
-                        conf,
-                        images,
-                        segFiles,
-                        seed_pos_rel,
-                        np.array(roi_bbox),
-                        save_path_plant
-                    )
-                    tasks.append(task_args)
-
-    print(f"Résumé : {skipped_count} plantes déjà traitées (ignorées).")
+    print(f"Summary: {skipped_count} plants skipped. {len(tasks)} new tasks created.")
 
     slurm_cpus = os.environ.get('SLURM_CPUS_PER_TASK')
     if slurm_cpus:

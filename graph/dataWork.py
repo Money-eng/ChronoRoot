@@ -54,14 +54,14 @@ def dataWork(conf, pfile, folder, N_exp=None):
 
     files = load_path(metadata['folder'], '*.png')
     files = [file for file in files if 'mask' not in file][:20]
-    pixel_size = 0.04  # Default pixel size in mm
+    pixel_size = 0.04 # Default pixel size in mm
     for i in files:
         try:
             detect = qr_detect(i)[0]
             pixel_size = 10 / get_pixel_size(detect)
             break
         except:
-            # print('QR not found in', i)
+            
             pixel_size = 0.04
             pass
 
