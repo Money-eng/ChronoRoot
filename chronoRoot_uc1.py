@@ -18,7 +18,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from graph.ChronoRoot import ChronoRootAnalyzer
 import os
-from rsml import rsml2mtg, mtg2rsml
+from openalea.rsml import rsml2mtg, mtg2rsml
 from pathlib import Path
 from openalea.mtg import MTG
 import sys

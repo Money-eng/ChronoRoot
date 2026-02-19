@@ -8,7 +8,7 @@ from ..base import BaseMeasure
 def convex_hull_area(points):
     points = np.array(points)
     hull = ConvexHull(points)
-    return hull.area
+    return hull.volume # What ?
 
 
 class Convex_Area_Hull(BaseMeasure):

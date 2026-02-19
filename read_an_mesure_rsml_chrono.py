@@ -8,7 +8,7 @@ import sys
 import cv2
 import xml.etree.ElementTree as ET
 from datetime import datetime
-from rsml import rsml2mtg
+from openalea.rsml import rsml2mtg
 
 # --- Imports (Measures & QR) ---
 try:
@@ -101,32 +101,33 @@ def calculate_pixel_size_for_folder(plant_folder):
     metadata_path = os.path.join(box_path, 'metadata.json')
     default_px = 0.04 
 
-    if not os.path.exists(metadata_path):
-        metadata_path = os.path.join(os.path.dirname(box_path), 'metadata.json')
-        if not os.path.exists(metadata_path):
-            return default_px
+    # if not os.path.exists(metadata_path):
+    #     metadata_path = os.path.join(os.path.dirname(box_path), 'metadata.json')
+    #     if not os.path.exists(metadata_path):
+    #         return default_px
 
-    try:
-        with open(metadata_path, 'r') as f:
-            meta = json.load(f)
-        source_folder = meta.get('folder', '')
-        if not os.path.exists(source_folder):
-            return default_px
+    # try:
+    #     with open(metadata_path, 'r') as f:
+    #         meta = json.load(f)
+    #     source_folder = meta.get('folder', '')
+    #     if not os.path.exists(source_folder):
+    #         return default_px
 
-        images = sorted(glob.glob(os.path.join(source_folder, "*.png")))
-        images = [img for img in images if 'mask' not in img][:5]
+    #     images = sorted(glob.glob(os.path.join(source_folder, "*.png")))
+    #     images = [img for img in images if 'mask' not in img][:5]
         
-        for img_path in images:
-            detect = qr_detect(img_path)
-            if detect:
-                px_size_mm = 10.0 / get_pixel_size(detect)
-                return px_size_mm
-    except Exception:
-        pass
+    #     for img_path in images:
+    #         detect = qr_detect(img_path)
+    #         if detect:
+    #             px_size_mm = 10.0 / get_pixel_size(detect)
+    #             return px_size_mm
+    # except Exception:
+    #     pass
     return default_px
 
 # ==========================================
 # MAIN LOOP
+# Time,mainRootLength,lateralRootsLength,totalRootsLength,mainRootGrad,lateralRootsGrad,totalRootsGrad,mainRootAccel,lateralRootsAccel,totalRootsAccel,NumberOfLateralRoots,lateralRootDensity,lateralRootContDensity
 # ==========================================
 
 def process_root_system_architecture(input_pattern: str, output_csv: str):
@@ -238,45 +239,42 @@ def process_root_system_architecture(input_pattern: str, output_csv: str):
         if plant_records:
             df_plant = pd.DataFrame(plant_records)
             df_plant = df_plant.sort_values('TimeStep')
-
+            
             # Recalculer vitesses
-            target_col = 'TotalRootLength'
-            if target_col in df_plant.columns:
-                # On utilise 'Time elapsed' qui est maintenant propre (0.0, 0.25, 0.5...)
-                df_plant['dt'] = df_plant['Time elapsed (hours)'].diff()
-                # Évite division par zero si doublons
-                df_plant['dt'] = df_plant['dt'].replace(0, np.nan)
-                
-                df_plant['GrowthSpeed'] = df_plant[target_col].diff() / df_plant['dt']
-                df_plant['GrowthAcceleration'] = df_plant['GrowthSpeed'].diff() / df_plant['dt']
-                df_plant.drop(columns=['dt'], inplace=True)
+            df_plant['dt'] = df_plant['Time elapsed (hours)'].diff()
+            df_plant['dt'] = df_plant['dt'].replace(0, np.nan)
+            
+            df_plant['totalRootsGrad'] = df_plant['TotalRootLength'].diff() / df_plant['dt']
+            df_plant['totalRootsAccel'] = df_plant['totalRootsGrad'].diff() / df_plant['dt']
+            
+            df_plant['lateralRootsGrad'] = df_plant['LateralRootLength'].diff() / df_plant['dt']
+            df_plant['lateralRootsAccel'] = df_plant['lateralRootsGrad'].diff() / df_plant['dt']
+            
+            df_plant['mainRootGrad'] = df_plant['PrimaryRootLength'].diff() / df_plant['dt']
+            df_plant['mainRootAccel'] = df_plant['mainRootGrad'].diff() / df_plant['dt']
+            df_plant.drop(columns=['dt'], inplace=True)
             
             all_data.append(df_plant)
 
     if all_data:
         final_df = pd.concat(all_data, ignore_index=True)
         
-        # Ordre EXACT de ChronoRoot (plus vos métadonnées à la fin)
         chrono_order = [
             'FileName', 'TimeStep', 
             'TotalRootLength', 'LateralRootLength', 'NumberOfLateralRoots', 
             'TotalLength', 
+            'mainRootGrad', 'mainRootAccel', 'lateralRootsGrad', 'lateralRootsAccel', 'totalRootsGrad', 'totalRootsAccel',
             'NumberOfOrgans', 'Convex_Area_Hull', 'RootDensity',
             'Time elapsed (hours)', 'Acquisition Time'
         ]
         
-        # On ajoute les colonnes de contexte (box, plant...)
         context_cols = ['box_name', 'img_num', 'plant_num']
         
-        # Construction de la liste finale des colonnes
         final_cols = []
-        # D'abord le contexte pour s'y retrouver
         final_cols.extend(context_cols)
-        # Ensuite les colonnes standards
         for c in chrono_order:
             if c in final_df.columns:
                 final_cols.append(c)
-        # Ensuite le reste (Vitesse, Accel, PrimaryRoot...)
         remaining = [c for c in final_df.columns if c not in final_cols and c != 'PixelSize']
         final_cols.extend(remaining)
         

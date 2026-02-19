@@ -1,4 +1,4 @@
-from rsml import rsml2mtg, plot2d
+from openalea.rsml import rsml2mtg, plot2d
 import matplotlib.pyplot as plt
 
 graph = rsml2mtg(

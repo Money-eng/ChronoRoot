@@ -93,7 +93,7 @@ def automatic_seed_from_segmentation(seg: np.ndarray, rsml_path: str, time_step:
                 map_label_to_bounding_box[label_at_pos] = (min_y, max_y, min_x, max_x)
                 break
     """
-    from rsml import rsml2mtg
+    from openalea.rsml import rsml2mtg
     from scipy.ndimage import label
     from utils.mtg_operations import extract_mtg_at_time_t, extract_plant_sub_mtg
     from rsml.misc import plant_vertices, root_vertices

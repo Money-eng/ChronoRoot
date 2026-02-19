@@ -2,7 +2,7 @@ import os
 import pandas as pd
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
-def extract_recursive(root_dir, output_file="all_events_combined.csv"):
+def extract_recursive(root_dir, output_file="oo.csv"):
     all_data = []
 
     # Walk through the folder structure
@@ -38,4 +38,4 @@ def extract_recursive(root_dir, output_file="all_events_combined.csv"):
         print("No tfevents files found.")
 
 # Run the extraction starting from your current directory
-extract_recursive("/home/loai/Documents/code/RSMLExtraction/RSA_reconstruction/Method/ChronoRoot/logs")
+extract_recursive("/home/loai/Documents/code/RSMLExtraction/Results/Training/Logs")

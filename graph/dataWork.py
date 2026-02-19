@@ -71,21 +71,29 @@ def dataWork(conf, pfile, folder, N_exp=None):
     mainRoot = data['MainRootLength'].to_numpy().astype('float')
     lateralRoots = data['LateralRootsLength'].to_numpy().astype('float')
     numlateralRoots = data['NumberOfLateralRoots'].to_numpy().astype('float')
+    convexHullArea = data['ConvexHullArea'].to_numpy().astype('float')
+    rootDensity = data['RootDensity'].to_numpy().astype('float')
 
+    # Remove small peaks due to noise
     space = 30
     for t in range(space, N // 2):
         if numlateralRoots[t - space] == 0 and numlateralRoots[t] == 0:
             lateralRoots[t - space:t] = 0
             numlateralRoots[t - space:t] = 0
+            convexHullArea[t - space:t] = 0
+            rootDensity[t - space:t] = 0
 
     # lateralRoots[0:600] = 0.0
     # numlateralRoots[0:600] = 0.0
 
-    # Smooth
-    mainRoot = signal.medfilt(mainRoot, 9)
-    lateralRoots = signal.medfilt(lateralRoots, 9)
-    numlateralRoots = signal.medfilt(numlateralRoots, 25)
+    # Smooth - median filter
+    mainRoot = signal.medfilt(mainRoot, 9) # meter
+    lateralRoots = signal.medfilt(lateralRoots, 9) #meter
+    numlateralRoots = signal.medfilt(numlateralRoots, 25) # count
+    convexHullArea = signal.medfilt(convexHullArea, 9) # mm2
+    rootDensity = signal.medfilt(rootDensity, 9) # mm/mm2
 
+    # Remove small discontinuities
     for i in range(1, len(mainRoot)):
         # dif = mainRoot[i] < mainRoot[i-1]
         # if dif:
@@ -94,24 +102,33 @@ def dataWork(conf, pfile, folder, N_exp=None):
         #         mainRoot[i] = mainRoot[i-1]
 
         dif = numlateralRoots[i] < numlateralRoots[i - 1]
+        # if sudden decrease and previous value is greater than 4
         if dif and numlateralRoots[i - 1] > 4:
-            numlateralRoots[i] = numlateralRoots[i - 1]
+            numlateralRoots[i] = numlateralRoots[i - 1] # keep previous value
 
         dif = lateralRoots[i] < lateralRoots[i - 1]
+        # if sudden decrease and previous value is greater than 50
         if dif and lateralRoots[i - 1] > 50:
-            lateralRoots[i] = lateralRoots[i - 1]
+            lateralRoots[i] = lateralRoots[i - 1] # keep previous value
 
     mainRootProcessed = mainRoot.copy().astype('float')
     lateralRootsProcessed = lateralRoots.copy().astype('float')
     numlateralRootsProcessed = numlateralRoots.copy().astype('float')
+    convexHullAreaProcessed = convexHullArea.copy().astype('float')
+    rootDensityProcessed = rootDensity.copy().astype('float')
 
     r = 4
+    # Smooth - moving average
     for j in range(r, len(mainRootProcessed)):
         mainRootProcessed[j - r:j + r + 1] = np.mean(mainRoot[j - r:j + r + 1])
         lateralRootsProcessed[j - r:j + r + 1] = np.mean(lateralRoots[j - r:j + r + 1])
+        convexHullAreaProcessed[j - r:j + r + 1] = np.mean(convexHullArea[j - r:j + r + 1])
+        rootDensityProcessed[j - r:j + r + 1] = np.mean(rootDensity[j - r:j + r + 1])
 
-    mainRootProcessed = mainRootProcessed * pixel_size
-    lateralRootsProcessed = lateralRootsProcessed * pixel_size
+    mainRootProcessed = mainRootProcessed * pixel_size # mm
+    lateralRootsProcessed = lateralRootsProcessed * pixel_size # mm
+    convexHullAreaProcessed = convexHullAreaProcessed * (pixel_size ** 2) # mm2
+    rootDensityProcessed = rootDensityProcessed / pixel_size # mm/mm2
 
     time = np.zeros(index.shape, dtype='float')
     for i in range(0, N):
@@ -127,6 +144,8 @@ def dataWork(conf, pfile, folder, N_exp=None):
     data['MainRootLength'] = mainRootProcessed
     data['LateralRootsLength'] = lateralRootsProcessed
     data['NumberOfLateralRoots'] = numlateralRootsProcessed
+    data['ConvexHullArea'] = convexHullAreaProcessed
+    data['RootDensity'] = rootDensityProcessed
     data['TotalLength'] = mainRootProcessed + lateralRootsProcessed
 
     data.insert(data.shape[1], 'Acquisition Time', time)
@@ -153,20 +172,28 @@ def dataWork(conf, pfile, folder, N_exp=None):
     mainRootPooled1 = np.zeros(n, dtype='float')
     lateralRootsPooled1 = np.zeros(n, dtype='float')
     numlateralRootsPooled1 = np.zeros(n, dtype='float')
+    convexHullAreaPooled1 = np.zeros(n, dtype='float')
+    rootDensityPooled1 = np.zeros(n, dtype='float')
 
     for i in range(0, n):
         mainRootPooled1[i] = np.mean(mainRootProcessed[2 * i:2 * i + 2])
         lateralRootsPooled1[i] = np.mean(lateralRootsProcessed[2 * i:2 * i + 2])
         numlateralRootsPooled1[i] = np.mean(numlateralRootsProcessed[2 * i:2 * i + 2])
-
+        convexHullAreaPooled1[i] = np.mean(convexHullAreaProcessed[2 * i:2 * i + 2])
+        rootDensityPooled1[i] = np.mean(rootDensityProcessed[2 * i:2 * i + 2])
+        
     mainRootPooled2 = np.zeros(n2, dtype='float')
     lateralRootsPooled2 = np.zeros(n2, dtype='float')
     numlateralRootsPooled2 = np.zeros(n2, dtype='float')
+    convexHullAreaPooled2 = np.zeros(n2, dtype='float')
+    rootDensityPooled2 = np.zeros(n2, dtype='float')
 
     for i in range(0, n2):
         mainRootPooled2[i] = np.mean(mainRootPooled1[2 * i:2 * i + 2])
         lateralRootsPooled2[i] = np.mean(lateralRootsPooled1[2 * i:2 * i + 2])
         numlateralRootsPooled2[i] = np.mean(numlateralRootsPooled1[2 * i:2 * i + 2])
+        convexHullAreaPooled2[i] = np.mean(convexHullAreaPooled1[2 * i:2 * i + 2])
+        rootDensityPooled2[i] = np.mean(rootDensityPooled1[2 * i:2 * i + 2])
 
     mainRootGrad = np.gradient(mainRootPooled2, edge_order=2)
     lateralRootsGrad = np.gradient(lateralRootsPooled2, edge_order=2)
@@ -225,6 +252,8 @@ def dataWork(conf, pfile, folder, N_exp=None):
                                     'lateralRootsAccel': lateralRootsAccel,
                                     'totalRootsAccel': totalRootsAccel,
                                     'NumberOfLateralRoots': numlateralRootsPooled2,
+                                    'ConvexHullArea': convexHullAreaPooled2,
+                                    'RootDensity': rootDensityPooled2,
                                     'newDay': v2,
                                     'mainOverTotal': aporte_al_total,
                                     'lateralRootDensity': densidad_lateral,
