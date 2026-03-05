@@ -152,7 +152,7 @@ def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, model_
             try:
                 res, pred_mask_result, _ = future.result()
 
-                metrics_sum['loss'].append(0.0)
+                # metrics_sum['loss'].append(0.0) oops, correceted in reevaluation
                 for k, v in res.items():
                     if k in metrics_sum:
                         metrics_sum[k].append(v)
@@ -221,13 +221,13 @@ def process_single_validation_item(args):
     return results, pred_mask, gt_mask
 
 
-def train_one_model(model_name, d_train, g_train, d_val, g_val):
-    print(f"=== Entraînement : {model_name} ===")
+def train_one_model(model_name, d_train, g_train, d_val, g_val, loss):
     tf.compat.v1.reset_default_graph()
 
     current_conf = CONF.copy()
     current_conf['Model'] = model_name
     current_conf['l2'] = MODEL_L2.get(model_name, 1e-9)
+    current_conf['loss'] = loss
 
     current_lr = current_conf['learning_rate']
     lr_patience = 10
@@ -353,7 +353,10 @@ def main():
     parser.add_argument('--input_dir', type=str,
                         default="./Data")
     parser.add_argument('--models', type=str, nargs='+',
-                        default=['UNet'])
+                        default=['DeepLab', 'UNet', 'ResUNet', 'ResUNetDS', 'SegNet'])
+    
+    parser.add_argument('--loss', type=str, default='cldice', choices=['cross_entropy', 'cldice', 'dice'])
+    
     args = parser.parse_args()
 
     print(f"Démarrage de l'entraînement pour les modèles : {args.models}")
@@ -365,10 +368,10 @@ def main():
         return
 
     for model in args.models:
-        print(f"\n\n=== Entraînement du modèle : {model} ===")
+        print(f"\n\n=== Training model: {model} on dataset from {args.input_dir} with loss {args.loss} ===")
         try:
             train_one_model(model, d_train, g_train,
-                            d_val, g_val)
+                            d_val, g_val, loss=args.loss)
         except Exception as e:
             print(f"Erreur sur {model}: {e}")
             import traceback

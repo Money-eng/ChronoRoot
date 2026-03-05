@@ -20,7 +20,7 @@ CONF = {
     'iterPerEpoch': 100,
     'learning_rate': 0.0001,
     'dropout': 0.30,
-    'loss': 'cross_entropy',
+    'loss': 'cldice',
     'lambda1': 0.5,
     'lambda2': 0.5,
     'ckptDirRoot': 'modelWeights',
@@ -103,14 +103,11 @@ def make_summary(name, value):
 
 
 def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, model_name, do_heavy, use_crf=True):
-    metrics_sum = {
-        'loss': [], 'f1': [], 'precision': [], 'recall': [], 'iou': [], 'dice': [],
-        'dice_gpu': [], 'auc_gpu': [], 'precision_gpu': [], 'recall_gpu': [],
-        'betti_0_err': [], 'betti_1_err': [], 'betti_0_abs_err': [], 'betti_1_abs_err': [],
-        'centerline_distance': [], 'hausdorff_95': [], 'hausdorff_max': [], 'surface_dice_1mm': []
-    }
-
     global last_f1_score
+
+    metrics_sum = {
+        'loss': [], 'f1_score': [], 'f_2_score': [], 'f_3_score': [], 'f_4_score': [], 'precision': [], 'recall': [], 'specificity': [], 'mean_iou': [], 'iou': [], 'pixel_accuracy': [], 'dice': [], 'dice_gpu': [], 'auc_gpu': [], 'precision_gpu': [], 'recall_gpu': [], "hausdorff_95": [], "hausdorff_max": [], "surface_dice_1mm": [], "ASCD": [], "betti_0_abs_err": [], "betti_1_abs_err": [], "betti0_jaccard_ratio": [], "betti1_jaccard_ratio": [], "betti0_relative_error": [], "betti1_relative_error": [], "betti0_variation_index": [], "betti1_variation_index": [], "b0_pred": [], "b1_pred": [], 'normalized_mutual_information': []
+    }
 
     if do_heavy:
         heavy_keys = ['apls', 'apls_recall', 'apls_precision']

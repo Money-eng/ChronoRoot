@@ -91,8 +91,8 @@ class RootNet(object):
                 self.loss = -tf.reduce_mean(self.y * tf.math.log(tf.clip_by_value(self.logits, 1e-10, 1.0)),
                                             name="cross_entropy")
             elif config['loss'] == "cldice":
-                y_true_fg = self.y[:, :, :, 1]
-                y_pred_fg = self.logits[:, :, :, 1]
+                y_true_fg = self.y[:, :, :, 1:2]
+                y_pred_fg = self.logits[:, :, :, 1:2]
 
                 alpha = 0.5
                 iter_num = 10
