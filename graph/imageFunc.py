@@ -165,12 +165,12 @@ def getCleanSeg(segFile, bbox, seed, originalSeed):
 def getCleanSke(seg):
     ske = np.array(skeletonize(seg // 255), dtype='uint8')
 
-    ske = prune(ske, 5)
-    ske = trim(ske)
-    ske = prune(ske, 3)
-    ske = trim(ske)
+    ske = prune(ske, 5) # removes branches with length lower than 5 pixels
+    ske = trim(ske) # removes unwanted pixels from the skeleton (see trim function for details)
+    ske = prune(ske, 3) # removes branches with length lower than 3 pixels (after trim, some branches can be shorter than before)
+    ske = trim(ske) # removes unwanted pixels from the skeleton (see trim function for details)
 
-    bnodes, enodes = skeleton_nodes(ske)
+    bnodes, enodes = skeleton_nodes(ske) # gets the coordinates of the branch and end nodes of the skeleton
 
     flag = False
     if len(enodes) >= 2:

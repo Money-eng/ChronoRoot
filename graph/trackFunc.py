@@ -38,17 +38,17 @@ def graphInit(graph):
     for i in vertices:
         p1 = pos_vertex[i]
         if np.array_equal(p1, seed):
-            nodetype[i] = "Ini"
+            nodetype[i] = "Ini" # seed point
         else:
             if np.array_equal(p1, tip):
-                nodetype[i] = "FTip"
+                nodetype[i] = "FTip" # main root tip
             else:
                 vecinos = g.get_out_neighbours(i)
                 if len(vecinos) > 1:
-                    nodetype[i] = "Bif"
+                    nodetype[i] = "Bif" # bifurcation point
                 else:
                     if len(vecinos) == 1:
-                        nodetype[i] = "LTip"
+                        nodetype[i] = "LTip" # lateral root tip
 
     if len(vertices) == 2:
         clase[g.edge(s, t)][1] = 10

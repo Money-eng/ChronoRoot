@@ -252,16 +252,16 @@ def ChronoRootAnalyzer(conf, images, segFiles, seed, bbox):
 
         print('Growth Begin')
 
-        grafo, seed, ske2 = createGraph(ske.copy(), seed, enodes, bnodes)
-        grafo, ske, ske2 = trimGraph(grafo, ske, ske2)
-        grafo = graphInit(grafo)
+        grafo, seed, ske2 = createGraph(ske.copy(), seed, enodes, bnodes) # create the initial graph from the skeleton of the first valid segmentation, using the seed point and the end nodes and branch nodes of the skeleton. The graph is built by following the neighbors of the seed point in the skeleton, and adding vertices and edges to the graph accordingly. The function returns the graph, the updated seed point (which is now a vertex in the graph), and a copy of the skeleton that has been modified during the graph creation process.
+        grafo, ske, ske2 = trimGraph(grafo, ske, ske2) # post-process the graph and the skeleton to remove any spurious branches or nodes that may have been added during the graph creation process. This function takes the initial graph, the original skeleton, and the modified skeleton as input, and returns a trimmed version of the graph and the skeletons. The trimming process may involve removing small branches, merging close nodes, or other operations to clean up the graph structure and ensure it accurately represents the root system.
+        grafo = graphInit(grafo) # initialize the graph for tracking by setting the appropriate properties for the vertices and edges. This function takes the trimmed graph as input and returns an initialized graph that is ready for tracking across time steps. The initialization process may involve setting vertex types (e.g., main root, lateral root), edge classes (e.g., root segments), and other properties that will be used in the tracking process to match nodes and edges across different time steps.
 
         image_name = getImgName(images[i], conf)
 
         gPath = os.path.join(graphsPath, image_name.replace(conf['FileExt'], '.xml.gz'))
         saveGraph(grafo, gPath)
 
-        rsmlTree, numberLR = createTree(conf, i, images, grafo, ske, ske2)
+        rsmlTree, numberLR = createTree(conf, i, images, grafo, ske, ske2) # create an RSML tree structure from the graph and the skeletons. This function takes the configuration, the current time step index, the list of images, the current graph, and the skeletons as input, and returns an RSML tree object that represents the root system structure at the current time step. The function may involve traversing the graph to identify root segments, classifying them as main root or lateral roots based on their properties, and constructing a hierarchical tree structure that can be saved in RSML format for further analysis or visualization.
 
         rsml = os.path.join(rsmlPath, image_name.replace(conf['FileExt'], '.rsml'))
         rsmlTree.write(open(rsml, 'w'), encoding='unicode')

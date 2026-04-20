@@ -26,7 +26,7 @@ def find_dists(i, node, lnodes):  # RETURNS THE LIST OF NODES WITHOUT THE NEARES
     return d
 
 
-def trimGraph(grafo, ske, ske2):
+def trimGraph(grafo, ske, ske2): # post-process the graph and the skeleton to remove any spurious branches or nodes that may have been added during the graph creation process.
     g, pos, weight, clase, nodetype, age = grafo
 
     edges_to_delete = []
@@ -55,33 +55,32 @@ def trimGraph(grafo, ske, ske2):
     to_delete = []
     vertices = g.get_vertices()
 
-    for v in vertices:
+    for v in vertices: # for each vertex in the graph,
         vecinos = g.get_out_neighbors(v)
-        if len(vecinos) == 2:
+        if len(vecinos) == 2: # if the vertex has exactly two neighbors,
             edge = g.edge(vecinos[0], vecinos[1])
 
-            if edge is None:
-                edge = g.add_edge(vecinos[0], vecinos[1])
+            if edge is None: # if there is no edge between the two neighbors, 
                 ed1 = g.edge(v, vecinos[0])
-                w1 = weight[ed1]
+                w1 = weight[ed1] 
                 ed2 = g.edge(v, vecinos[1])
                 w2 = weight[ed2]
 
                 weight[edge] = w1 + w2
 
-                if w1 == 0:
+                if w1 == 0: # if the first edge has zero weight, merge the two edges by assigning the class of the second edge to the new edge, and updating the skeleton accordingly
                     clase[edge] = clase[ed2]
                     ske2[np.where(ske2 == clase[ed1][0])] == clase[ed2][0]
-                elif w2 == 0:
+                elif w2 == 0: 
                     clase[edge] = clase[ed1]
                     ske2[np.where(ske2 == clase[ed2][0])] == clase[ed1][0]
-                else:
+                else: 
                     clase[edge] = clase[ed2]
                     ske2[np.where(ske2 == clase[ed1][0])] == clase[ed2][0]
 
                 g.remove_edge(ed1)
                 g.remove_edge(ed2)
-                to_delete.append(v)
+                to_delete.append(v) #
 
     for i in reversed(sorted(to_delete)):
         g.clear_vertex(i)
@@ -96,7 +95,7 @@ def trimGraph(grafo, ske, ske2):
 
     pares = []
 
-    for i in vertices:
+    for i in vertices: # merge close nodes by finding pairs of vertices that are within a certain distance threshold (e.g., 3 units) 
         d = find_dists(i, pos, pos_vertex)
         mask = np.ones(pos_vertex.shape[0], bool)
         mask[i] = False
@@ -112,7 +111,7 @@ def trimGraph(grafo, ske, ske2):
 
     to_delete = []
 
-    for par in pares:
+    for par in pares: # for each pair of close vertices, check if there is an edge between them. If there is an edge with zero weight, merge the two vertices by connecting their neighbors and removing the original vertices from the graph. This process helps to clean up the graph structure and ensure that closely located nodes are represented as a single node in the graph.
         v1 = par[0]
         v2 = par[1]
         if g.edge(v1, v2):

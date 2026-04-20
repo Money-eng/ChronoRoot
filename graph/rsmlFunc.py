@@ -253,7 +253,7 @@ def continue_mainRoot(ske2, actual, enodes, rsml, mainRoot, lista):
     hijos = vecinos(ske2, actual)
 
     ## Primero me fijo si no me sobró un pixel del color que venia
-    for i in range(0, len(hijos)):
+    for i in range(0, len(hijos)): # for each neighbor of the current node in the image, check if it has the same color as the current node (which indicates that it is part of the main root), and if so, mark the current node as visited and continue to that neighbor
         x = hijos[i][0]
         y = hijos[i][1]
         color = ske2[y, x]
@@ -264,7 +264,7 @@ def continue_mainRoot(ske2, actual, enodes, rsml, mainRoot, lista):
             break
 
     ## Guardo en una lista los que no pertenezcan a la main root para visitarlos luego
-    for i in range(0, len(hijos)):
+    for i in range(0, len(hijos)): # keep track of the neighbors of the current node that do not belong to the main root, and add them to a list for later processing. This is done by checking if the color of the neighbor is not in the mainRoot list, and if so, adding it to the lista list if it has not already been added.
         x = hijos[i][0]
         y = hijos[i][1]
         color = ske2[y, x]

@@ -24,9 +24,9 @@ c = 3
 
 
 def createGraph(img, seed, enodes, bnodes):
-    g = gt.Graph(directed=False)
-    enodes = np.array(enodes)
-    bnodes = np.array(bnodes)
+    g = gt.Graph(directed=False) # create an undirected graph
+    enodes = np.array(enodes) # end nodes of each branch in the skeleton
+    bnodes = np.array(bnodes) # branch nodes of the skeleton
 
     pos = g.new_vertex_property("vector<double>")
     nodetype = g.new_vertex_property("string")
@@ -37,26 +37,26 @@ def createGraph(img, seed, enodes, bnodes):
     global c
     c = 3
 
-    s1, enodes, d = find_nearest(seed, enodes)
+    s1, enodes, d = find_nearest(seed, enodes) # find the nearest end node to the seed (except the seed itself)
 
-    semilla = g.add_vertex()
-    pos[semilla] = s1
-    img[s1[1], s1[0]] = c
+    semilla = g.add_vertex() # add the seed as the first vertex of the graph
+    pos[semilla] = s1 
+    img[s1[1], s1[0]] = c # mark the seed in the image with a unique value (c=3)
 
-    hijos = vecinos(img, s1)
+    hijos = vecinos(img, s1) # find the neighbors of the seed in the image (these will be the first nodes connected to the seed in the graph)
 
-    img, nodo, largo_arista = get_next_node(img, hijos[0], s1, [], 0)
+    img, nodo, largo_arista = get_next_node(img, hijos[0], s1, [], 0) # get the next node in the graph by following the first neighbor of the seed, and calculate the length of the edge between them
 
     n2 = g.add_vertex()
     pos[n2] = nodo
     arista = g.add_edge(semilla, n2)
-    weight[arista] = largo_arista
+    weight[arista] = largo_arista # assign the length of the edge between the seed and the first node as the weight of the edge in the graph
     clase[arista] = [c, 0]
 
     c = c + 1
 
     if nodo not in enodes.tolist():
-        g, pos, weight = continue_graph(g, pos, weight, clase, img, nodo, n2, enodes, bnodes)
+        g, pos, weight = continue_graph(g, pos, weight, clase, img, nodo, n2, enodes, bnodes) # continue building the graph recursively
 
     v = g.get_vertices()
     if len(v) < 2:
@@ -78,27 +78,27 @@ def continue_graph(g, pos, weight, clase, img, actual, padre, enodes, bnodes):
 
     hijos = vecinos(img, actual)
 
-    for i in hijos:
-        img, nodo, largo_arista = get_next_node(img, i, actual, hijos, 0)
+    for i in hijos: # for each neighbor of the current node in the image
+        img, nodo, largo_arista = get_next_node(img, i, actual, hijos, 0) # get the next node in the graph by following the neighbor, and calculate the length of the edge between them
 
-        s = gt.find_vertex(g, pos, nodo)
+        s = gt.find_vertex(g, pos, nodo) # check if the node already exists in the graph 
         if s == []:
             s = g.add_vertex()
             pos[s] = nodo
         else:
             s = s[0]
 
-        arista = g.add_edge(padre, s)
+        arista = g.add_edge(padre, s) # add an edge between the current node (padre) and the new node (s) in the graph
 
         weight[arista] = largo_arista
         clase[arista] = [c, 0]
 
         c = c + 1
 
-        if img[nodo[1], nodo[0]] == 1:
+        if img[nodo[1], nodo[0]] == 1: # if the node is still part of the skeleton (value 1), mark it as visited with value c (which is incremented for each new node)
             img[nodo[1], nodo[0]] = c
 
-        if nodo not in enodes.tolist():
+        if nodo not in enodes.tolist():# if the node is not an end node, continue building the graph recursively from this node
             g, pos, weight = continue_graph(g, pos, weight, clase, img, nodo, s, enodes, bnodes)
 
     return g, pos, weight
@@ -127,7 +127,7 @@ def get_next_node(img, actual, padre, hermanos, d):
     return get_next_node(img, hijo, actual, hijos, dist)
 
 
-def vecinos(img, seed, comp=1):
+def vecinos(img, seed, comp=1): # find the neighbors of a given pixel 
     lista = []
     x = seed[0]
     y = seed[1]

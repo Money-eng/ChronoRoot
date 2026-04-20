@@ -234,15 +234,6 @@ def process_job_folder(gpu_id, job_data, conf, available_models, base_output_dir
     ensembleModels(conf, current_input_dir, epoch_output_root, use_crf, available_models,
                    sub_folder=sub_dir, max_cpu=max_cpu_allowed)
 
-    # for model_name in available_models:
-    #     folder_to_delete = os.path.join(epoch_output_root, model_name, sub_dir)
-    #     if os.path.exists(folder_to_delete):
-    #         try: 
-    #             shutil.rmtree(folder_to_delete)
-    #             # remove folder if empty
-    #             parent_folder = os.path.join(epoch_output_root, model_name)
-    #             os.rmdir(parent_folder)
-    #         except: pass
     gc.collect()
 
 

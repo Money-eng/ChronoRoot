@@ -44,7 +44,7 @@ last_f1_score = 0.0
 
 def load_folder(folder_path, img_suffix, mask_suffix, desc):
     if not os.path.exists(folder_path):
-        print(f"ATTENTION: Le dossier {folder_path} n'existe pas !")
+        print(f"Error: Folder {folder_path} does not exist.")
         return [], []
 
     provider = MPImageDataProvider(search_path=[
@@ -75,7 +75,6 @@ def load_folder(folder_path, img_suffix, mask_suffix, desc):
 
 
 def load_dataset(input_dir, img_suffix=".png", mask_suffix="_mask.png"):
-    print(f"Chargement des données depuis {input_dir}...")
 
     train_dir = os.path.join(input_dir, 'Train')
     test_dir = os.path.join(input_dir, 'Test')
@@ -87,12 +86,12 @@ def load_dataset(input_dir, img_suffix=".png", mask_suffix="_mask.png"):
             test_dir = os.path.join(input_dir, 'val')
 
     data_train, gt_train = load_folder(
-        train_dir, img_suffix, mask_suffix, "Chargement Train")
+        train_dir, img_suffix, mask_suffix, "Loading Train")
     data_val, gt_val = load_folder(
-        test_dir, img_suffix, mask_suffix, "Chargement Test")
+        test_dir, img_suffix, mask_suffix, "Loading Test")
 
     print(
-        f"Résumé : {len(data_train)} images d'entraînement, {len(data_val)} images de validation.")
+        f"Summary : {len(data_train)} training images, {len(data_val)} validation images.")
     return data_train, gt_train, data_val, gt_val
 
 
@@ -144,7 +143,6 @@ def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, model_
             futures_list.append(future)
 
             if i == len(data_val) - 1:
-                # last_processed_img = img
                 last_processed_gt = gt
 
         print("Attente des workers CPU...")
@@ -152,7 +150,6 @@ def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, model_
             try:
                 res, pred_mask_result, _ = future.result()
 
-                # metrics_sum['loss'].append(0.0) oops, correceted in reevaluation
                 for k, v in res.items():
                     if k in metrics_sum:
                         metrics_sum[k].append(v)
@@ -160,7 +157,7 @@ def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, model_
                 last_processed_pred = pred_mask_result
 
             except Exception as e:
-                print(f"Erreur dans un worker : {e}")
+                print(f"Error processing validation item: {e}")
                 import traceback
                 traceback.print_exc()
 
@@ -222,7 +219,6 @@ def process_single_validation_item(args):
 
 
 def train_one_model(model_name, d_train, g_train, d_val, g_val):
-    print(f"=== Entraînement : {model_name} ===")
     tf.compat.v1.reset_default_graph()
 
     current_conf = CONF.copy()
@@ -318,7 +314,7 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
 
                 metrics = evaluate_validation(sess, net, d_val, g_val, current_conf, val_writer, epoch, model_name,
                                               do_heavy)
-                print(f"Metriques de validation à la fin de l'époque {epoch + 1} : {metrics}")
+                print(f"Validation metrics at the end of epoch {epoch + 1} : {metrics}")
 
                 if not checkpoint_exists:
                     val_dice = metrics['dice']
@@ -328,7 +324,7 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
                         lr_wait = 0
                     else:
                         lr_wait += 1
-                        print(f" -> Validation loss ne s'améliore pas (Patience: {lr_wait}/{lr_patience})")
+                        print(f" -> Validation loss does not improve (Patience: {lr_wait}/{lr_patience})")
 
                         if lr_wait >= lr_patience:
                             old_lr = current_lr
@@ -336,11 +332,11 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
                             lr_wait = 0
                             if current_lr < old_lr:
                                 print(
-                                    f"⚠️ PLATEAU DÉTECTÉ : Réduction du Learning Rate de {old_lr:.1e} à {current_lr:.1e}")
+                                    f"Reduction of Learning Rate from {old_lr:.1e} to {current_lr:.1e}")
 
             epoch_pbar.set_postfix({'Train Loss': f"{avg_train_loss:.4f}", 'Val Loss': f"{metrics.get('loss', 0):.4f}"})
 
-            print(f" -> Sauvegarde modèle dans : {epoch_dir}")
+            print(f" -> Saving model in : {epoch_dir}")
             net.save(epoch_dir)
             train_writer.flush()
             val_writer.flush()
@@ -356,21 +352,21 @@ def main():
                         default=['DeepLab'])
     args = parser.parse_args()
 
-    print(f"Démarrage de l'entraînement pour les modèles : {args.models}")
+    print(f"Starting training for models : {args.models}")
 
     d_train, g_train, d_val, g_val = load_dataset(args.input_dir)
 
     if len(d_train) == 0:
-        print("Erreur: Pas de données.")
+        print("Error: No data available.")
         return
 
     for model in args.models:
-        print(f"\n\n=== Entraînement du modèle : {model} ===")
+        print(f"\n\n=== Training model : {model} ===")
         try:
             train_one_model(model, d_train, g_train,
                             d_val, g_val)
         except Exception as e:
-            print(f"Erreur sur {model}: {e}")
+            print(f"Error with {model}: {e}")
             import traceback
             traceback.print_exc()
 
