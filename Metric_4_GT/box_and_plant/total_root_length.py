@@ -3,6 +3,7 @@ from openalea.mtg import MTG
 from ..base import BaseMeasure
 
 from rsml.misc import root_vertices
+
 def total_root_length(mtg: MTG) -> float:
     roots = root_vertices(mtg)
     total_length = 0.0

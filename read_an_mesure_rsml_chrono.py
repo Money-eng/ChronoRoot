@@ -10,18 +10,17 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from openalea.rsml import rsml2mtg
 
-# --- Imports (Measures & QR) ---
 try:
-    from Measures import get_measures
+    from Metric_4_GT import get_measures
 except ImportError:
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-    from Measures import get_measures
+    from Metric_4_GT import get_measures
 
 try:
     from graph.qr import qr_detect, get_pixel_size
 except ImportError:
-    print("Module 'qr' non trouvé. Utilisation de la logique intégrée.")
-    from pyzbar import pyzbar
+    print("Module 'graph.qr' not found. QR code detection will be disabled.")
+    from pyzbar import pyzbar # below is a copy
 
     def adjust_gamma(image, gamma=1.0):
         invGamma = 1.0 / gamma
@@ -67,10 +66,6 @@ METRIC_SCALES = {
     "NumberOfOrgans": 0
 }
 
-# ==========================================
-# FONCTIONS UTILITAIRES
-# ==========================================
-
 def get_rsml_metadata(rsml_path):
     """
     Extrait l'objet datetime réel pour le calcul du delta,
@@ -80,13 +75,13 @@ def get_rsml_metadata(rsml_path):
         tree = ET.parse(rsml_path)
         root = tree.getroot()
         
-        # 1. Date de capture
+        # 1. Date of acquisition (ChronoRoot format) - "captured" tag
         captured_tag = root.find(".//captured")
         dt_obj = None
         if captured_tag is not None and captured_tag.text:
             dt_obj = datetime.strptime(captured_tag.text, "%Y-%m-%dT%H:%M:%S")
             
-        # 2. Nom de fichier image original
+        # 2. Original image name (if available) - "image/name" tag
         name_tag = root.find(".//image/name")
         img_name = name_tag.text if (name_tag is not None) else os.path.basename(rsml_path)
         
@@ -96,33 +91,9 @@ def get_rsml_metadata(rsml_path):
         return None, os.path.basename(rsml_path)
 
 def calculate_pixel_size_for_folder(plant_folder):
-    # Logique inchangée (recherche metadata.json + QR)
     box_path = os.path.dirname(plant_folder)
     metadata_path = os.path.join(box_path, 'metadata.json')
     default_px = 0.04 
-
-    # if not os.path.exists(metadata_path):
-    #     metadata_path = os.path.join(os.path.dirname(box_path), 'metadata.json')
-    #     if not os.path.exists(metadata_path):
-    #         return default_px
-
-    # try:
-    #     with open(metadata_path, 'r') as f:
-    #         meta = json.load(f)
-    #     source_folder = meta.get('folder', '')
-    #     if not os.path.exists(source_folder):
-    #         return default_px
-
-    #     images = sorted(glob.glob(os.path.join(source_folder, "*.png")))
-    #     images = [img for img in images if 'mask' not in img][:5]
-        
-    #     for img_path in images:
-    #         detect = qr_detect(img_path)
-    #         if detect:
-    #             px_size_mm = 10.0 / get_pixel_size(detect)
-    #             return px_size_mm
-    # except Exception:
-    #     pass
     return default_px
 
 # ==========================================
@@ -138,7 +109,7 @@ def process_root_system_architecture(input_pattern: str, output_csv: str):
 
     search_path = os.path.join(input_pattern, "*", "Plant*")
     plant_folders = glob.glob(search_path)
-    print(f"Dossiers trouvés : {len(plant_folders)}. Démarrage...")
+    print(f"Found {len(plant_folders)} plant folders matching pattern: {search_path}")
 
     for plant_folder in plant_folders:
         path_parts = os.path.normpath(plant_folder).split(os.sep)
@@ -195,14 +166,14 @@ def process_root_system_architecture(input_pattern: str, output_csv: str):
                     
                 time_elapsed_hours = delta.total_seconds() / 3600.0
             else:
-                print("  [Warning] Date de capture non trouvée, utilisation du timestep pour le temps écoulé.")
+                print("  [Warning] No capture date found, using timestep-based time.")
                 time_elapsed_hours = timestep * 0.25 
 
             try:
                 mtg = rsml2mtg(fpath)
                 
                 record = {
-                    'FileName': original_filename, # Utilise le nom dans le XML (ex: ...png)
+                    'FileName': original_filename, 
                     'TimeStep': timestep,
                     'box_name': rpi_name,
                     'img_num': box_name_str,

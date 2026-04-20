@@ -19,7 +19,7 @@ CONF = {
     'iterPerEpoch': 100,
     'learning_rate': 0.0001,
     'dropout': 0.30,
-    'loss': 'cldice',
+    'loss': 'cldice',  ######################" Change loss here ######################"""
     'lambda1': 0.5,
     'lambda2': 0.5,
     'ckptDirRoot': 'modelWeights',

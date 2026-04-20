@@ -5,19 +5,17 @@ from skimage.morphology import skeletonize
 from skimage.measure import label, regionprops
 from sklearn.metrics import normalized_mutual_info_score # Ajout pour le NMI
 
-from apsl_mask import skeleton_to_graph_sampled
+from apsl_mask import skeleton_to_graph_sampled # no used because too heavy, but kept in case of future use
 from apls import APLSMetric
 
 EPSILON = 1e-8
 
 
 def cl_score(v, s):
-    """Calcule le cl_score basé sur cldice_metric.py"""
     return float(np.sum(v * s)) / float(np.sum(s) + EPSILON)
 
 
 def clDice(v_p, v_l):
-    """Calcule le clDice basé sur cldice_metric.py"""
     skel_l = skeletonize(v_l)
     skel_p = skeletonize(v_p)
     tprec = cl_score(v_p, skel_l)
@@ -26,10 +24,6 @@ def clDice(v_p, v_l):
 
 
 def compute_advanced_metrics(pred_mask, gt_mask, do_heavy):
-    """
-    Fonction principale assemblant toutes les sous-métriques.
-    Argument 'debug=True' pour afficher les étapes.
-    """
     y_pred = pred_mask.astype(bool)
     y_true = gt_mask.astype(bool)
 

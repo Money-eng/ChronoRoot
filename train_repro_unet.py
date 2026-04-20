@@ -44,7 +44,7 @@ last_f1_score = 0.0
 
 def load_folder(folder_path, img_suffix, mask_suffix, desc):
     if not os.path.exists(folder_path):
-        print(f"ATTENTION: Le dossier {folder_path} n'existe pas !")
+        print(f"Warning: Folder {folder_path} does not exist. Returning empty dataset.")
         return [], []
 
     provider = MPImageDataProvider(search_path=[
@@ -87,17 +87,16 @@ def load_dataset(input_dir, img_suffix=".png", mask_suffix="_mask.png"):
             test_dir = os.path.join(input_dir, 'val')
 
     data_train, gt_train = load_folder(
-        train_dir, img_suffix, mask_suffix, "Chargement Train")
+        train_dir, img_suffix, mask_suffix, "Loading Train")
     data_val, gt_val = load_folder(
-        test_dir, img_suffix, mask_suffix, "Chargement Test")
+        test_dir, img_suffix, mask_suffix, "Loading Test")
 
     print(
-        f"Résumé : {len(data_train)} images d'entraînement, {len(data_val)} images de validation.")
+        f"Summary : {len(data_train)} training images, {len(data_val)} validation images.")
     return data_train, gt_train, data_val, gt_val
 
 
 def make_summary(name, value):
-    """Crée un objet Summary manuellement pour logger une valeur scalaire dans TF1."""
     return tf.compat.v1.Summary(value=[tf.compat.v1.Summary.Value(tag=name, simple_value=float(value))])
 
 
@@ -114,8 +113,7 @@ def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, model_
             metrics_sum[k] = []
 
     normalized_data_val = [(img.astype(np.float32) / 255.0)[:, :, np.newaxis] for img in data_val]
-
-    # last_processed_img = None
+    
     last_processed_gt = None
     last_processed_pred = None
 
@@ -276,7 +274,7 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
                 last_epoch = epoch - 1
                 last_epoch_dir = os.path.join(ckpt_base_path, f"epoch_{last_epoch}")
                 # assuming last epoch dir exists
-                print(f" -> Chargement du checkpoint de l'époque {last_epoch}...")
+                print(f" -> Restoring model from last checkpoint: {last_epoch_dir}")
                 net.restore(last_epoch_dir)
 
             epoch_loss = 0.0
@@ -287,7 +285,7 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
                     batch_x, batch_y = batch_gen.queue.get(timeout=60)
                     batch_gen.queue.task_done()
                 except queue.Empty:
-                    print("Erreur: Timeout lors de la récupération du batch.")
+                    print("Error: Timeout while waiting for batch. Ending training early.")
                     break
 
                 if checkpoint_exists:
@@ -318,7 +316,7 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
 
                 metrics = evaluate_validation(sess, net, d_val, g_val, current_conf, val_writer, epoch, model_name,
                                               do_heavy)
-                print(f"Metriques de validation à la fin de l'époque {epoch + 1} : {metrics}")
+                print(f"Validation metrics at the end of epoch {epoch + 1} : {metrics}")
 
                 if not checkpoint_exists:
                     val_dice = metrics['dice']
@@ -328,7 +326,7 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
                         lr_wait = 0
                     else:
                         lr_wait += 1
-                        print(f" -> Validation loss ne s'améliore pas (Patience: {lr_wait}/{lr_patience})")
+                        print(f" -> Validation loss does not improve (Patience: {lr_wait}/{lr_patience})")
 
                         if lr_wait >= lr_patience:
                             old_lr = current_lr
@@ -336,11 +334,11 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
                             lr_wait = 0
                             if current_lr < old_lr:
                                 print(
-                                    f"⚠️ PLATEAU DÉTECTÉ : Réduction du Learning Rate de {old_lr:.1e} à {current_lr:.1e}")
+                                    f"⚠️ Reducing learning rate to {current_lr:.1e} due to plateau in validation performance.")
 
             epoch_pbar.set_postfix({'Train Loss': f"{avg_train_loss:.4f}", 'Val Loss': f"{metrics.get('loss', 0):.4f}"})
 
-            print(f" -> Sauvegarde modèle dans : {epoch_dir}")
+            print(f" -> Saving model to : {epoch_dir}")
             net.save(epoch_dir)
             train_writer.flush()
             val_writer.flush()
@@ -356,21 +354,21 @@ def main():
                         default=['UNet'])
     args = parser.parse_args()
 
-    print(f"Démarrage de l'entraînement pour les modèles : {args.models}")
+    print(f"Starting training for models : {args.models}")
 
     d_train, g_train, d_val, g_val = load_dataset(args.input_dir)
 
     if len(d_train) == 0:
-        print("Erreur: Pas de données.")
+        print("Error: No data available.")
         return
 
     for model in args.models:
-        print(f"\n\n=== Entraînement du modèle : {model} ===")
+        print(f"\n\n=== Training the model : {model} ===")
         try:
             train_one_model(model, d_train, g_train,
                             d_val, g_val)
         except Exception as e:
-            print(f"Erreur sur {model}: {e}")
+            print(f"Error with {model}: {e}")
             import traceback
             traceback.print_exc()
 

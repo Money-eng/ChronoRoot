@@ -19,7 +19,7 @@ CONF = {
     'iterPerEpoch': 100,
     'learning_rate': 0.0001,
     'dropout': 0.30,
-    'loss': 'cldice',
+    'loss': 'cldice',  ######################" Change loss here ######################"""
     'lambda1': 0.5,
     'lambda2': 0.5,
     'ckptDirRoot': 'modelWeights',
@@ -75,8 +75,6 @@ def load_folder(folder_path, img_suffix, mask_suffix, desc):
 
 
 def load_dataset(input_dir, img_suffix=".png", mask_suffix="_mask.png"):
-    print(f"Chargement des données depuis {input_dir}...")
-
     train_dir = os.path.join(input_dir, 'Train')
     test_dir = os.path.join(input_dir, 'Test')
 
@@ -97,7 +95,6 @@ def load_dataset(input_dir, img_suffix=".png", mask_suffix="_mask.png"):
 
 
 def make_summary(name, value):
-    """Crée un objet Summary manuellement pour logger une valeur scalaire dans TF1."""
     return tf.compat.v1.Summary(value=[tf.compat.v1.Summary.Value(tag=name, simple_value=float(value))])
 
 
@@ -147,7 +144,6 @@ def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, model_
                 # last_processed_img = img
                 last_processed_gt = gt
 
-        print("Attente des workers CPU...")
         for future in tqdm.tqdm(as_completed(futures_list), total=len(futures_list), desc="CPU Metrics"):
             try:
                 res, pred_mask_result, _ = future.result()
@@ -160,7 +156,7 @@ def evaluate_validation(sess, net, data_val, gt_val, conf, writer, epoch, model_
                 last_processed_pred = pred_mask_result
 
             except Exception as e:
-                print(f"Erreur dans un worker : {e}")
+                print(f"Error in processing validation item: {e}")
                 import traceback
                 traceback.print_exc()
 
@@ -222,7 +218,6 @@ def process_single_validation_item(args):
 
 
 def train_one_model(model_name, d_train, g_train, d_val, g_val):
-    print(f"=== Entraînement : {model_name} ===")
     tf.compat.v1.reset_default_graph()
 
     current_conf = CONF.copy()
@@ -318,7 +313,7 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
 
                 metrics = evaluate_validation(sess, net, d_val, g_val, current_conf, val_writer, epoch, model_name,
                                               do_heavy)
-                print(f"Metriques de validation à la fin de l'époque {epoch + 1} : {metrics}")
+                print(f"Validation metrics at the end of epoch {epoch + 1} : {metrics}")
 
                 if not checkpoint_exists:
                     val_dice = metrics['dice']
@@ -328,7 +323,7 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
                         lr_wait = 0
                     else:
                         lr_wait += 1
-                        print(f" -> Validation loss ne s'améliore pas (Patience: {lr_wait}/{lr_patience})")
+                        print(f" -> Validation loss does not improve (Patience: {lr_wait}/{lr_patience})")
 
                         if lr_wait >= lr_patience:
                             old_lr = current_lr
@@ -336,11 +331,11 @@ def train_one_model(model_name, d_train, g_train, d_val, g_val):
                             lr_wait = 0
                             if current_lr < old_lr:
                                 print(
-                                    f"⚠️ PLATEAU DÉTECTÉ : Réduction du Learning Rate de {old_lr:.1e} à {current_lr:.1e}")
+                                    f"⚠️ Learning rate reduced from {old_lr:.1e} to {current_lr:.1e} due to plateau in validation performance.")
 
             epoch_pbar.set_postfix({'Train Loss': f"{avg_train_loss:.4f}", 'Val Loss': f"{metrics.get('loss', 0):.4f}"})
 
-            print(f" -> Sauvegarde modèle dans : {epoch_dir}")
+            print(f" -> Saving model checkpoint for epoch {epoch + 1}...")
             net.save(epoch_dir)
             train_writer.flush()
             val_writer.flush()
@@ -356,7 +351,7 @@ def main():
                         default=['ResUNetDS'])
     args = parser.parse_args()
 
-    print(f"Démarrage de l'entraînement pour les modèles : {args.models}")
+    print(f"Starting training for models : {args.models}")
 
     d_train, g_train, d_val, g_val = load_dataset(args.input_dir)
 
@@ -365,12 +360,12 @@ def main():
         return
 
     for model in args.models:
-        print(f"\n\n=== Entraînement du modèle : {model} ===")
+        print(f"\n\n=== Training the model : {model} ===")
         try:
             train_one_model(model, d_train, g_train,
                             d_val, g_val)
         except Exception as e:
-            print(f"Erreur sur {model}: {e}")
+            print(f"Error with {model}: {e}")
             import traceback
             traceback.print_exc()
 
